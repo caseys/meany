@@ -30,7 +30,9 @@ const SYSTEM_PROMPT =
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
 /** With each turn: a nasty question about the user's life ends the reply, for more to roast */
-const ASK_ABOUT_THEM = 'First roast them. Then ask them one nasty, insulting question about their personal life, so you have more to roast next time.';
+const ASK_ABOUT_THEM = 'Roast them in one short sentence. Then ask them one short, nasty, insulting question about their personal life, so you have more to roast next time.';
+/** A reply is cut off after this many sentences (the roast and the question fit) */
+const MAX_SENTENCES = 3;
 /** How many of the user's earlier messages go with each turn (see respond) */
 const EARLIER_MESSAGES = 8;
 /** Silence after each sentence, as native Piper's sentence_silence */
@@ -288,6 +290,8 @@ export class VoiceChat {
     this.abort = new AbortController();
     const segmenter = new IncrementalPhraseSegmenter();
     const sentences: string[] = [];
+    /** Every sentence of the reply so far (`sentences` is the queue the voice takes them from) */
+    const said: string[] = [];
     let text = '';
     // (set inside startSpeaking: typed so TypeScript doesn't take it as always null)
     let speaking = null as ReturnType<VoiceChat['speakStream']> | null;
@@ -298,7 +302,12 @@ export class VoiceChat {
     for await (const piece of this.llm.reply(messages, this.abort.signal)) {
       if (turn !== this.turn) break;
       text += piece;
-      sentences.push(...segmenter.push(piece));
+      const done = segmenter.push(piece);
+      said.push(...done);
+      sentences.push(...done);
+      // Long enough: the rest isn't written (a roast and a question fit in three sentences)
+      const enough = said.length >= MAX_SENTENCES;
+      if (enough) this.abort.abort();
       if (!speaking && sentences.length) {
         if (previous && copies(sentences[0], previous)) {
           this.abort.abort();
@@ -307,8 +316,14 @@ export class VoiceChat {
         startSpeaking();
       }
       speaking?.wake();
+      if (enough) break;
     }
-    sentences.push(...segmenter.flush());
+    // (cut off at MAX_SENTENCES, the unfinished rest isn't said)
+    if (said.length < MAX_SENTENCES) {
+      const rest = segmenter.flush();
+      said.push(...rest);
+      sentences.push(...rest);
+    }
     if (!speaking) {
       // (a reply shorter than one sentence is checked whole)
       if (previous && text.trim() && copies(text, previous)) return COPIED;
@@ -316,8 +331,10 @@ export class VoiceChat {
     }
     speaking!.close();
     await speaking!.done;
-    console.info(`[voice] said: ${text.trim()}`);
-    return text.trim();
+    // What was said (a cut-off reply's unsaid rest isn't kept in the history either)
+    const reply = said.join(' ').trim() || text.trim();
+    console.info(`[voice] said: ${reply}`);
+    return reply;
   }
 
   private showEmoji(text: string, turn: number): void {

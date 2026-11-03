@@ -22,8 +22,8 @@ export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: stri
 const MODEL_BYTES = 320_000_000;
 /** The most context asked for: a voice chat's turns are short */
 const CONTEXT_CAP = 4096;
-/** A spoken reply is a few sentences; this stops one that runs on */
-export const MAX_REPLY_TOKENS = 256;
+/** A spoken reply is a roast and a question; this stops one that runs on (the engine also stops at three sentences) */
+export const MAX_REPLY_TOKENS = 120;
 /** How long the worker pauses before each weight piece on iPhone and iPad (see webllm.worker.ts) */
 const IOS_LOAD_PACE_MS = 80;
 /** Where WebLLM stores downloaded model files (Cache API) */
