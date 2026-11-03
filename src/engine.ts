@@ -25,16 +25,12 @@ import { nextRoast } from './runtimes/roasts.ts';
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
 const SYSTEM_PROMPT =
-  'You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Swear a lot, like fuck and shit. Keep it to one to three short sentences, with no formatting.';
+  'You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said, insult them, and ask them a question about themselves. Swear a lot, like fuck and shit. Keep it to one to three short sentences, with no formatting.';
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
-/** With each turn: answer, insult, ask (kept short: the more a small model is asked, the worse it answers) */
-const ASK_ABOUT_THEM = 'Answer them, insult them, and ask them a question.';
 /** A reply is cut off after this many sentences (the roast and the question fit) */
 const MAX_SENTENCES = 3;
-/** How many of the user's earlier messages go with each turn (see respond) */
-const EARLIER_MESSAGES = 8;
 /** Silence after each sentence, as native Piper's sentence_silence */
 const SENTENCE_GAP_SEC = 0.2;
 /** Utterances shorter than this are a cough or a click, not a turn */
@@ -235,19 +231,6 @@ export class VoiceChat {
           : "A Wikipedia search found nothing for this: say you couldn't look it up.";
       }
       if (turn !== this.turn) return;
-      // What the user said earlier, as plain sentences with the turn's own words: told in the
-      // prompt only, the model didn't use what users said about themselves (1 of 6 roasts); handed
-      // over with each turn, it did (6 of 6). Kept to the last few, and never parsed.
-      const earlier = this.history
-        .slice(0, -1)
-        .filter((m) => m.role === 'user')
-        .slice(-EARLIER_MESSAGES)
-        .map((m) => (/[.!?]$/.test(m.content.trim()) ? m.content.trim() : `${m.content.trim()}.`));
-      const told = earlier.length ? `Earlier, they told you: ${earlier.join(' ')}` : '';
-      // Asked in the system prompt, the model ended 2 of 8 replies with a question; asked here,
-      // next to its reply, 12 of 16. (Written rude and swearing, this note brought a refusal,
-      // run-on rants and darker lines: the persona stays in the system prompt.)
-      note = [note, told, ASK_ABOUT_THEM].filter(Boolean).join('\n');
       const reply = await this.answer(turn, note);
       await saying;
       if (turn !== this.turn) return;
