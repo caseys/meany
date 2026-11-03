@@ -27,7 +27,8 @@ export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaki
 const SYSTEM_PROMPT =
   "you are a mean, antagonistic chat bot that hurls vulgar insults every chance you get. This is a a spoken conversation - the user talks to you out loud, and everything you write is read aloud to them.  Be horribly rude and swear a lot! Keep it to one to three short sentences, with no formatting.";
 
-const GREETING = 'Hi! What would you like to talk about?';
+/** The opening line when the insult can't be written */
+const GREETING = 'Oh great, you again. What do you want?';
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
 /** Silence after each sentence, as native Piper's sentence_silence */
@@ -136,9 +137,12 @@ export class VoiceChat {
       const now = (): VoiceState => this.state;
       if (now() !== 'loading') return; // stopped while loading
       if (this.history.length === 0) {
-        this.history.push({ role: 'assistant', content: GREETING });
+        // The chat opens with a fresh insult
+        const intro = (await this.llm.insult('intro message').catch(() => '')) || GREETING;
+        if (now() !== 'loading') return;
+        this.history.push({ role: 'assistant', content: intro });
         this.setState('speaking');
-        await this.speak([GREETING], ++this.turn);
+        await this.speak([intro], ++this.turn);
       }
       if (now() === 'speaking' || now() === 'loading') this.setState('listening');
     } catch (err) {

@@ -231,6 +231,27 @@ export class VoiceLlm {
     return yes + no > 0 ? yes / (yes + no) : 0.5;
   }
 
+  /**
+   * One random insult to say out loud, written with no conversation, on `theme` when given (the
+   * chat opens with one on "intro message"). Sampled a little hotter than replies, so it differs each time.
+   */
+  async insult(theme?: string): Promise<string> {
+    await this.load();
+    const { text } = await this.client!.complete({
+      messages: [
+        { role: 'system', content: INSULT_PROMPT },
+        { role: 'user', content: theme ? `Theme: ${theme}` : 'Any theme.' },
+      ],
+      // (at 1.0 the model drifts into word salad; 0.8 keeps it coherent and still different each time)
+      temperature: 0.8,
+      top_p: 0.9,
+      presence_penalty: 1.0,
+      max_tokens: 60,
+      extra_body: { enable_thinking: false },
+    });
+    return (withoutThinking(text) ?? '').trim().replace(/^["'“]+|["'”]+$/g, '');
+  }
+
   /** A short plan for answering a request, written with no conversation (only the request) */
   async plan(request: string): Promise<string> {
     await this.load();
@@ -257,6 +278,9 @@ export type Route = 'wait' | 'answer' | 'think' | 'search';
 
 const COMPLETE_PROMPT =
   'Someone is speaking to a voice assistant. Here is what they have said so far. Is it a complete sentence or question, or did they stop in the middle? Answer yes if it is complete, no if they stopped in the middle.';
+
+const INSULT_PROMPT =
+  'Write one short, vulgar, funny insult to say out loud to the person you are talking to. One or two sentences, no formatting, nothing else.';
 
 const PLAN_PROMPT = [
   'Write a short plan for answering the request well in a few spoken sentences: two to four brief steps on one line.',
