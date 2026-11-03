@@ -112,13 +112,24 @@ const RECENT_REPLIES = 3;
 /** A reply that copied one of the bot's recent ones (see VoiceChat.answer) */
 const COPIED = Symbol('copied');
 
-/** The words of a text, lowercase, in threes */
-function wordTriples(text: string): Set<string> {
+/** A text's runs of n words, lowercase, without punctuation */
+function wordRuns(text: string, n: number): Set<string> {
   const words = text.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
-  const triples = new Set<string>();
-  for (let i = 0; i + 2 < words.length; i++) triples.add(words.slice(i, i + 3).join(' '));
-  return triples;
+  const runs = new Set<string>();
+  for (let i = 0; i + n <= words.length; i++) runs.add(words.slice(i, i + n).join(' '));
+  return runs;
 }
+const wordTriples = (text: string) => wordRuns(text, 3);
+
+/**
+ * How long a run of words may be shared with anything the bot said before: a longer one is a phrase
+ * it's stuck on ("get off the couch and roll in hell"), which, said again, it says more and more
+ * (it reads its own replies), so a sentence with one isn't said.
+ */
+const PHRASE_WORDS = 5;
+
+/** A sentence that brings back a phrase from `said` (the runs of PHRASE_WORDS words said so far) */
+const repeatsPhrase = (sentence: string, said: Set<string>) => [...wordRuns(sentence, PHRASE_WORDS)].some((run) => said.has(run));
 
 /**
  * A sentence copied from `previous`: most of its three-word runs are in it (a short sentence, the
@@ -354,10 +365,12 @@ export class VoiceChat {
     // what it said, so it's left out only for the turn that copied.
     // (its last three replies: it also brings back older insults)
     const previous = this.history.filter((m) => m.role === 'assistant').slice(-RECENT_REPLIES).map((m) => m.content);
-    const reply = await this.generate(turn, this.prompt(note), previous);
+    // and every phrase it has said this session (the app's questions and roasts too)
+    const phrases = new Set(this.history.filter((m) => m.role === 'assistant').flatMap((m) => [...wordRuns(m.content, PHRASE_WORDS)]));
+    const reply = await this.generate(turn, this.prompt(note), previous, phrases);
     if (reply !== COPIED && (reply || turn !== this.turn)) return reply;
-    console.info('[voice] the reply copied the last one: written again without it in view');
-    const again = await this.generate(turn, this.prompt(note, true), previous);
+    console.info('[voice] the reply repeated itself: written again without the last one in view');
+    const again = await this.generate(turn, this.prompt(note, true), previous, phrases);
     if (again !== COPIED && again) return again;
     // Copied again, or nothing said: a roast from the pool instead
     if (turn !== this.turn) return '';
@@ -368,10 +381,11 @@ export class VoiceChat {
   }
 
   /**
-   * One reply, streamed into speech a sentence at a time. The first sentence is held until it's
-   * checked: a copy of one of the `previous` replies stops the reply before anything is said (COPIED).
+   * One reply, streamed into speech a sentence at a time, each checked before it's said. A first
+   * sentence that copies one of the `previous` replies, or brings back one of the `phrases` already
+   * said, stops the reply before anything is said (COPIED); a later one ends the reply before it.
    */
-  private async generate(turn: number, messages: ChatMessage[], previous: string[]): Promise<string | typeof COPIED> {
+  private async generate(turn: number, messages: ChatMessage[], previous: string[], phrases: Set<string>): Promise<string | typeof COPIED> {
     this.abort = new AbortController();
     const segmenter = new IncrementalPhraseSegmenter();
     const sentences: string[] = [];
@@ -384,30 +398,43 @@ export class VoiceChat {
       speaking = this.speakStream(sentences, turn);
       this.showEmoji(text, turn);
     };
+    const repeats = (sentence: string) =>
+      (!said.length && previous.some((reply) => copies(sentence, reply))) || repeatsPhrase(sentence, phrases);
+    const keep = (sentence: string) => {
+      said.push(sentence);
+      sentences.push(sentence);
+      // (a phrase said twice in one reply is a repeat too)
+      for (const run of wordRuns(sentence, PHRASE_WORDS)) phrases.add(run);
+    };
     for await (const piece of this.llm.reply(messages, this.abort.signal, this.style.reply)) {
       if (turn !== this.turn) break;
       text += piece;
-      const done = segmenter.push(piece);
-      said.push(...done);
-      sentences.push(...done);
-      // Long enough: the rest isn't written (a roast and a question fit in three sentences)
-      const enough = said.length >= this.style.sentences;
-      if (enough) this.abort.abort();
-      if (!speaking && sentences.length) {
-        if (previous.some((reply) => copies(sentences[0], reply))) {
-          this.abort.abort();
-          return COPIED;
-        }
-        startSpeaking();
+      let repeated = false;
+      for (const sentence of segmenter.push(piece)) {
+        repeated = repeats(sentence);
+        if (repeated) break;
+        keep(sentence);
       }
+      if (repeated && !said.length) {
+        this.abort.abort();
+        return COPIED;
+      }
+      // Long enough, or a repeat: the rest isn't written (a roast and a question fit in three sentences)
+      const enough = repeated || said.length >= this.style.sentences;
+      if (enough) this.abort.abort();
+      if (!speaking && sentences.length) startSpeaking();
       speaking?.wake();
       if (enough) break;
     }
-    // (cut off at this turn's length, the unfinished rest isn't said)
-    if (said.length < this.style.sentences) {
-      const rest = segmenter.flush();
-      said.push(...rest);
-      sentences.push(...rest);
+    // (cut off at this turn's length or at a repeat, the unfinished rest isn't said)
+    if (said.length < this.style.sentences && !this.abort.signal.aborted) {
+      for (const sentence of segmenter.flush()) {
+        if (repeats(sentence)) {
+          if (!said.length) return COPIED;
+          break;
+        }
+        keep(sentence);
+      }
     }
     if (!speaking) {
       // (a reply shorter than one sentence is checked whole)
