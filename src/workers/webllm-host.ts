@@ -4,7 +4,7 @@
 // can be tested with a fake one.
 // ============================================================================
 
-import type { WebLlmChatRequest, WebLlmCompletion, WebLlmEvent, WebLlmRequest } from './webllm-protocol.ts';
+import type { WebLlmChatRequest, WebLlmCompletion, WebLlmEvent, WebLlmRequest, WebLlmTextRequest } from './webllm-protocol.ts';
 
 /** The parts of WebLLM's MLCEngine this host uses */
 export interface WebLlmEngine {
@@ -12,6 +12,9 @@ export interface WebLlmEngine {
   reload(model: string, options: { context_window_size: number; sliding_window_size: number }): Promise<void>;
   unload(): Promise<void>;
   interruptGenerate(): Promise<void> | void;
+  completions: {
+    create(request: WebLlmTextRequest & { stream: true }): Promise<AsyncIterable<{ choices: Array<{ text?: string | null }> }>>;
+  };
   chat: {
     completions: {
       create(request: WebLlmChatRequest & { stream: true }): Promise<AsyncIterable<{ choices: Array<{ delta?: { content?: string | null } }> }>>;
@@ -59,6 +62,15 @@ export function createWebLlmHost(parts: WebLlmHostParts, post: (event: WebLlmEve
           // Our context size, never a sliding window: WebLLM accepts only one of the two, and some
           // models (Gemma 3) ship both
           await engine.reload(request.model, { context_window_size: request.contextWindow, sliding_window_size: -1 });
+        });
+        return;
+      case 'text':
+        void settle(request.id, async () => {
+          const stream = await engine.completions.create({ ...request.request, stream: true });
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.text;
+            if (content) post({ kind: 'delta', id: request.id, content });
+          }
         });
         return;
       case 'chat':

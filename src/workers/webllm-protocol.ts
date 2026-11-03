@@ -27,6 +27,19 @@ export interface WebLlmChatRequest {
   extra_body?: { enable_thinking: boolean };
 }
 
+/** A plain text completion: the prompt as the model sees it (chat template and all), continued */
+export interface WebLlmTextRequest {
+  prompt: string;
+  temperature: number;
+  top_p: number;
+  max_tokens: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  logit_bias?: Record<string, number>;
+  /** Text that ends the completion when it's written (not included) */
+  stop?: string[];
+}
+
 /** A token WebLLM sampled, with how likely it and its likeliest alternatives were */
 export interface WebLlmTokenReport {
   token: string;
@@ -48,6 +61,8 @@ export type WebLlmRequest =
   | { kind: 'load'; id: number; model: string; contextWindow: number }
   /** A reply streamed: 'delta' for each piece of text, then 'done' */
   | { kind: 'chat'; id: number; request: WebLlmChatRequest }
+  /** A plain text completion streamed: 'delta' for each piece, then 'done' */
+  | { kind: 'text'; id: number; request: WebLlmTextRequest }
   /** A reply not streamed: 'done' with a WebLlmCompletion */
   | { kind: 'complete'; id: number; request: WebLlmChatRequest }
   /** The first, tiny run after a load, run and caught in the worker: always 'done' (a failure is only logged there) */

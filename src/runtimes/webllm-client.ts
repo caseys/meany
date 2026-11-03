@@ -4,7 +4,7 @@
 // imports nothing from WebLLM, so the library stays in the worker.
 // ============================================================================
 
-import type { WebLlmChatRequest, WebLlmCompletion, WebLlmEvent, WebLlmRequest } from '../workers/webllm-protocol.ts';
+import type { WebLlmChatRequest, WebLlmCompletion, WebLlmEvent, WebLlmRequest, WebLlmTextRequest } from '../workers/webllm-protocol.ts';
 
 /** What the client needs of a Worker (a fake one in tests) */
 export interface WebLlmWorker {
@@ -41,6 +41,15 @@ export class WebLlmClient {
 
   /** A reply as it is written: the pieces of text (the request is sent now, not when reading starts) */
   stream(request: WebLlmChatRequest): AsyncGenerator<string, void> {
+    return this.streamed({ kind: 'chat', request });
+  }
+
+  /** A plain text completion as it is written (the prompt is the model's whole input, template included) */
+  streamText(request: WebLlmTextRequest): AsyncGenerator<string, void> {
+    return this.streamed({ kind: 'text', request });
+  }
+
+  private streamed(ask: { kind: 'chat'; request: WebLlmChatRequest } | { kind: 'text'; request: WebLlmTextRequest }): AsyncGenerator<string, void> {
     const pieces: string[] = [];
     const state: { end: { error?: Error } | null } = { end: null };
     let wake: (() => void) | null = null;
@@ -63,7 +72,7 @@ export class WebLlmClient {
         notify();
       },
     });
-    this.worker.postMessage({ kind: 'chat', id, request });
+    this.worker.postMessage({ ...ask, id } as WebLlmRequest);
     // (a reader that stops early ends the stream: what comes after is dropped)
     const forget = () => void this.pending.delete(id);
     return (async function* () {

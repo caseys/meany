@@ -38,7 +38,9 @@ const MIN_UTTERANCE_MS = 300;
 /** A pause this long (12 frames of ~85 ms, about 1 s) ends the user's turn: answered at once */
 const PAUSE_FRAMES = 12;
 
-/** A reply that copied the bot's last one (see VoiceChat.answer) */
+/** How many of the bot's recent replies a new reply is checked against for copying */
+const RECENT_REPLIES = 3;
+/** A reply that copied one of the bot's recent ones (see VoiceChat.answer) */
 const COPIED = Symbol('copied');
 
 /** The words of a text, lowercase, in threes */
@@ -251,7 +253,8 @@ export class VoiceChat {
     // The model copies its own last reply when the user gives it little to answer ("okay
     // whatever"); without that reply in the prompt it never did, but then it can't follow up on
     // what it said, so it's left out only for the turn that copied.
-    const previous = [...this.history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
+    // (its last three replies: it also brings back older insults)
+    const previous = this.history.filter((m) => m.role === 'assistant').slice(-RECENT_REPLIES).map((m) => m.content);
     const reply = await this.generate(turn, this.prompt(note), previous);
     if (reply !== COPIED && (reply || turn !== this.turn)) return reply;
     console.info('[voice] the reply copied the last one: written again without it in view');
@@ -266,10 +269,10 @@ export class VoiceChat {
   }
 
   /**
-   * One reply, streamed into speech a sentence at a time. With `previous`, the first sentence is
-   * held until it's checked: a copy of `previous` stops the reply before anything is said (COPIED).
+   * One reply, streamed into speech a sentence at a time. The first sentence is held until it's
+   * checked: a copy of one of the `previous` replies stops the reply before anything is said (COPIED).
    */
-  private async generate(turn: number, messages: ChatMessage[], previous: string): Promise<string | typeof COPIED> {
+  private async generate(turn: number, messages: ChatMessage[], previous: string[]): Promise<string | typeof COPIED> {
     this.abort = new AbortController();
     const segmenter = new IncrementalPhraseSegmenter();
     const sentences: string[] = [];
@@ -292,7 +295,7 @@ export class VoiceChat {
       const enough = said.length >= MAX_SENTENCES;
       if (enough) this.abort.abort();
       if (!speaking && sentences.length) {
-        if (previous && copies(sentences[0], previous)) {
+        if (previous.some((reply) => copies(sentences[0], reply))) {
           this.abort.abort();
           return COPIED;
         }
@@ -309,7 +312,7 @@ export class VoiceChat {
     }
     if (!speaking) {
       // (a reply shorter than one sentence is checked whole)
-      if (previous && text.trim() && copies(text, previous)) return COPIED;
+      if (text.trim() && previous.some((reply) => copies(text, reply))) return COPIED;
       startSpeaking();
     }
     speaking!.close();

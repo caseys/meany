@@ -22,6 +22,8 @@ export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: stri
 const MODEL_BYTES = 320_000_000;
 /** The most context asked for: a voice chat's turns are short */
 const CONTEXT_CAP = 4096;
+/** How long the model may think before it replies (about a sentence or two) */
+export const THINK_TOKENS = 60;
 /** A spoken reply is a roast and a question; this stops one that runs on (the engine also stops at three sentences) */
 export const MAX_REPLY_TOKENS = 120;
 /** How long the worker pauses before each weight piece on iPhone and iPad (see webllm.worker.ts) */
@@ -175,6 +177,44 @@ export class VoiceLlm {
       shown = at;
       onProgress?.(at);
     });
+  }
+
+  /**
+   * The reply after a short think: the model thinks for at most THINK_TOKENS (Qwen's own <think>
+   * block, opened for it), the block is closed, and the reply is written after it. Uncapped, it
+   * skipped thinking on some turns and on others thought for 3,000 characters (8 s on a Mac, much
+   * longer on a phone), mostly checking itself against safety rules. Built as a plain completion in
+   * Qwen's chat format, which is what lets the thinking be cut off and the reply follow it.
+   * Returns the thinking with the reply's pieces, for the log.
+   *
+   * Not used: capped at 60 tokens it spent the budget on an outline ("Thinking Process: 1.
+   * **Analyze the Request:**…") and its replies got worse (5 of 16 on topic against 15 of 16, more
+   * repeats, a second later on a Mac). Kept for trying a steered start to the thinking.
+   */
+  async *thinkThenReply(messages: ChatMessage[], signal?: AbortSignal): AsyncGenerator<string, string> {
+    await this.load();
+    const client = this.client!;
+    const onAbort = () => client.interrupt();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      const prompt = `${messages.map((m) => `<|im_start|>${m.role}\n${m.content}<|im_end|>\n`).join('')}<|im_start|>assistant\n<think>\n`;
+      let thought = '';
+      for await (const piece of client.streamText({ prompt, ...SAMPLING, max_tokens: THINK_TOKENS, stop: ['</think>'] })) thought += piece;
+      if (signal?.aborted) return thought;
+      const answer = `${prompt}${thought.trim()}\n</think>\n\n`;
+      for await (const piece of client.streamText({
+        prompt: answer,
+        ...SAMPLING,
+        max_tokens: MAX_REPLY_TOKENS,
+        logit_bias: NO_GENDER,
+        stop: ['<|im_end|>', '<|endoftext|>', '<|im_start|>'],
+      })) {
+        yield piece;
+      }
+      return thought;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   /** The reply to the conversation, piece by piece as it is written (thinking left out) */
