@@ -29,6 +29,8 @@ const SYSTEM_PROMPT =
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
+/** With each turn: a nasty question about the user's life ends the reply, for more to roast */
+const ASK_ABOUT_THEM = 'First roast them. Then ask them one nasty, insulting question about their personal life, so you have more to roast next time.';
 /** How many of the user's earlier messages go with each turn (see respond) */
 const EARLIER_MESSAGES = 8;
 /** Silence after each sentence, as native Piper's sentence_silence */
@@ -239,10 +241,11 @@ export class VoiceChat {
         .filter((m) => m.role === 'user')
         .slice(-EARLIER_MESSAGES)
         .map((m) => (/[.!?]$/.test(m.content.trim()) ? m.content.trim() : `${m.content.trim()}.`));
-      if (earlier.length) {
-        const told = `Earlier in this chat, the user told you: ${earlier.join(' ')} Roast them using what they told you about themselves.`;
-        note = note ? `${note}\n${told}` : told;
-      }
+      const told = earlier.length ? `Earlier in this chat, the user told you: ${earlier.join(' ')} Roast them using what they told you about themselves.` : '';
+      // Asked in the system prompt, the model ended 2 of 8 replies with a question; asked here,
+      // next to its reply, 12 of 16. (Written rude and swearing, this note brought a refusal,
+      // run-on rants and darker lines: the persona stays in the system prompt.)
+      note = [note, told, ASK_ABOUT_THEM].filter(Boolean).join('\n');
       const reply = await this.answer(turn, note);
       await saying;
       if (turn !== this.turn) return;
