@@ -11,7 +11,7 @@ export const CUSTOM_VOICES = ['en_US-eminem-medium'];
 export const VOICE_ID = 'en_US-eminem-medium';
 
 /** How fast our voices speak (1 = the voice's own pace); applied in workers/tts.worker.ts */
-export const SPEED = 1.1;
+export const SPEED = 1.2;
 
 /** How long a sentence may take with nothing back before the worker is taken for dead (cardist's rule: ≥ 15 s) */
 const STALL_MS = 15_000;
