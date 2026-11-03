@@ -4,6 +4,7 @@
 import './style.css';
 import { FluidAudioVisualizer } from './audio/visualizer.ts';
 import { VoiceChat, type VoiceState } from './engine.ts';
+import type { Route } from './runtimes/llm.ts';
 
 const button = document.getElementById('start') as HTMLButtonElement;
 const ring = button.querySelector('.ring circle') as SVGCircleElement;
@@ -26,17 +27,41 @@ const waveIn = new FluidAudioVisualizer(document.getElementById('wave-in') as HT
   glowColor: 'rgba(56, 189, 248, 0.45)',
 });
 
-const NOTES: Partial<Record<VoiceState, string>> = { loading: 'Getting ready…', listening: 'Listening' };
+/** The status line: a few words on what the chat is doing, and how this turn is being answered */
+const ROUTE_NOTE: Record<Route, string> = {
+  wait: 'Listening · waiting for you to finish',
+  answer: 'Quick answer',
+  think: 'Thinking it through',
+  search: 'Looking it up',
+};
+let route: Route | null = null;
+let shownState: VoiceState = 'idle';
+let errorDetail = '';
+function renderNote(): void {
+  if (shownState === 'error') note.textContent = `Couldn't start: ${errorDetail || 'unknown error'}`;
+  else if (shownState === 'loading') note.textContent = 'Getting ready…';
+  else if (shownState === 'listening') note.textContent = route === 'wait' ? ROUTE_NOTE.wait : 'Listening';
+  else if (shownState === 'thinking' || shownState === 'speaking') note.textContent = route && route !== 'wait' ? ROUTE_NOTE[route] : '';
+  else note.textContent = '';
+}
 
 const chat = new VoiceChat({
   onState: (state, detail) => {
     document.body.className = state === 'idle' || state === 'error' ? state : `on ${state}`;
     button.setAttribute('aria-label', state === 'idle' || state === 'error' ? 'Start talking' : 'Stop');
-    if (state === 'listening' || state === 'idle') routeEl.classList.remove('shown');
-    note.textContent = state === 'error' ? `Couldn't start: ${detail ?? 'unknown error'}` : (NOTES[state] ?? '');
+    if (state === 'listening' || state === 'idle') {
+      routeEl.classList.remove('shown');
+      // A new turn of the user's: how it will be answered isn't known yet
+      route = null;
+    }
+    shownState = state;
+    errorDetail = detail ?? '';
+    renderNote();
   },
-  onRoute: (route) => {
-    const badge = ROUTE_BADGE[route];
+  onRoute: (decided) => {
+    route = decided;
+    renderNote();
+    const badge = ROUTE_BADGE[decided];
     if (badge) routeEl.textContent = badge;
     routeEl.classList.toggle('shown', !!badge);
   },
