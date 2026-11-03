@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // Deployed at https://www.mudberry.com/chatty-voice/
-  base: '/chatty-voice/',
+  // Deployed at https://www.mudberry.com/meany/
+  base: '/meany/',
   worker: { format: 'es' },
   optimizeDeps: {
     exclude: ['cactus-needle', '@realtimex/piper-tts-web'],

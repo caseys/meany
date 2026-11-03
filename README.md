@@ -15,4 +15,4 @@ npm install
 npm run dev
 ```
 
-Deploy with `scripts/deploy.sh` to https://www.mudberry.com/chatty-voice/. The page needs cross-origin isolation (COOP `same-origin`, COEP `credentialless`), so nginx serves `/chatty-voice/` like `/chatty/`. Add `?debug` to the URL to get `window.__voice` in the console.
+Deploy with `scripts/deploy.sh` to https://www.mudberry.com/meany/. The page needs cross-origin isolation (COOP `same-origin`, COEP `credentialless`), so nginx serves `/meany/` like `/chatty/` (`scripts/setup-nginx.sh`; the old `/chatty-voice/` redirects there). Add `?debug` to the URL to get `window.__voice` in the console.

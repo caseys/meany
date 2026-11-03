@@ -1,9 +1,8 @@
 // ============================================================================
 // The voice chat: listening → thinking → speaking → listening. Whistle writes down what the mic
-// heard at each pause; a gate decides whether the user is done (a sentence ending on "and" or
-// "the" isn't; otherwise one pass of the model, with no conversation, judges it), and the turn is
-// answered at once, or after a short plan (think) or a Wikipedia lookup (search) once something
-// can choose those reliably. Piper says
+// heard once the user has been quiet for about a second, and the turn is answered at once (the
+// paths to answer after a short plan, think, or a Wikipedia lookup, search, are built, but nothing
+// chooses them yet). Piper says
 // the answer a sentence at a time, each one synthesized while the one before it plays.
 //
 // The bot is never interrupted (no barge-in, as in cardist's voice chat): while it thinks or
@@ -35,20 +34,14 @@ const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that
 const SENTENCE_GAP_SEC = 0.2;
 /** Utterances shorter than this are a cough or a click, not a turn */
 const MIN_UTTERANCE_MS = 300;
-/** A pause this long (6 frames of ~85 ms) ends a piece of speech; the gate decides if the turn is over */
-const PAUSE_FRAMES = 6;
-/** After the gate says wait, this much more silence answers anyway */
-const WAIT_BACKSTOP_MS = 2500;
-/** Below this completeness (see VoiceLlm.completeness) the user is taken to be mid-sentence */
-const COMPLETE_MIN = 0.38;
-/** Words a finished sentence doesn't end on: the speaker paused and will go on */
-const TRAILING = /\b(?:and|or|but|so|because|if|that|then|the|a|an|my|your|our|to|of|for|with|about|like|um|uh|er|hmm)[.,!?]*$/i;
+/** A pause this long (12 frames of ~85 ms, about 1 s) ends the user's turn: answered at once */
+const PAUSE_FRAMES = 12;
 
 export interface VoiceChatEvents {
   onState?: (state: VoiceState, detail?: string) => void;
   /** Loading, 0..1 over all three models */
   onProgress?: (fraction: number) => void;
-  /** How a turn is being answered (set when the gate decides, cleared by the next) */
+  /** How a turn is being answered (set when the bot's turn starts) */
   onRoute?: (route: Route) => void;
   /** The emoji for the reply being said (null: none) */
   onEmoji?: (emoji: string | null) => void;
@@ -66,18 +59,17 @@ export class VoiceChat {
   /** The utterance under way began while it was the user's turn */
   private heardInTurn = false;
   private abort: AbortController | null = null;
-  /** What the user has said this turn so far (pieces between pauses) */
+  /** What the user has said this turn so far (speech that went on while the last piece was written down) */
   private pending = '';
-  /** Bumped by new speech: a decision about older words is dropped */
+  /** Bumped by new speech: words still being written down join the next piece's turn */
   private decision = 0;
-  private waitTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly events: VoiceChatEvents = {}) {
     this.audio = new SharedAudioSubsystem(
       {
         onSpeechStarted: () => {
           this.heardInTurn = this.state === 'listening';
-          // Still talking: whatever was being decided about the words before waits for these
+          // Still talking: the words before join this piece's turn
           if (this.heardInTurn) this.holdDecision();
         },
         onSpeechEnded: (samples16k, durationMs) => {
@@ -170,42 +162,26 @@ export class VoiceChat {
     this.setState('idle', why);
   }
 
-  /** Drops a decision under way, and the backstop of one that said wait */
+  /** New speech: a piece still being written down doesn't start the bot's turn */
   private holdDecision(): void {
     this.decision++;
-    if (this.waitTimer !== null) clearTimeout(this.waitTimer);
-    this.waitTimer = null;
   }
 
-  /** A piece of speech ended: written down, added to the turn, and the gate asked whether it's ours */
+  /** A second of silence: what was said is written down, and answered at once */
   private async heard(samples16k: Float32Array): Promise<void> {
     const id = ++this.decision;
     try {
       const text = (await this.stt.transcribe(samples16k, 16000, 'en')).text.trim();
       if (/[A-Za-z0-9]/.test(text)) this.pending = `${this.pending} ${text}`.trim();
       if (id !== this.decision || this.state !== 'listening' || !this.pending) return;
-      const trailing = TRAILING.test(this.pending);
-      const complete = trailing ? 0 : await this.llm.completeness(this.pending);
-      if (id !== this.decision || this.state !== 'listening') return;
-      console.info(`[voice] "${this.pending}": ${trailing ? 'ends mid-sentence' : `complete ${complete.toFixed(2)}`}`);
-      // Every turn is answered at once for now: the model can't tell which need a plan or a lookup
-      // (see VoiceLlm.completeness), so nothing routes to think or search yet
-      const best: Route = 'answer';
-      if (trailing || complete < COMPLETE_MIN) {
-        this.events.onRoute?.('wait');
-        this.waitTimer = setTimeout(() => {
-          this.waitTimer = null;
-          if (id === this.decision && this.state === 'listening') void this.respond(best);
-        }, WAIT_BACKSTOP_MS);
-        return;
-      }
-      await this.respond(best);
+      // Every turn is answered at once: no plan or lookup route is chosen yet
+      await this.respond('answer');
     } catch (err) {
       console.error('[voice] could not take the turn', err);
     }
   }
 
-  /** The bot's turn: the pending words answered the way the gate chose */
+  /** The bot's turn: the pending words answered by `route` */
   private async respond(route: Route): Promise<void> {
     const turn = ++this.turn;
     const heard = this.pending;
