@@ -20,14 +20,13 @@ import { WhistleSttProvider } from './runtimes/stt-provider.ts';
 import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
 import { keepAwake } from './core/keep-awake.ts';
+import { nextRoast } from './runtimes/roasts.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
 const SYSTEM_PROMPT =
   "you are a mean, antagonistic chat bot that hurls vulgar insults every chance you get. This is a a spoken conversation - the user talks to you out loud, and everything you write is read aloud to them.  Be horribly rude and swear a lot! Every reply is a brutal, derogatory comedy roast of the user: mock exactly what they just said, then hit them with a clever, personal burn about who they must be to say it. Answer any question in the middle of the roast. Work a real swear word like fuck or shit into your answer, spelled out in full. Keep it to one to three short sentences, with no formatting.";
 
-/** The opening line when the insult can't be written */
-const GREETING = 'Oh great, you again. What the fuck do you want, you sad little waste of a microphone?';
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
 /** Silence after each sentence, as native Piper's sentence_silence */
@@ -156,9 +155,8 @@ export class VoiceChat {
       const now = (): VoiceState => this.state;
       if (now() !== 'loading') return; // stopped while loading
       if (this.history.length === 0) {
-        // The chat opens with a fresh insult
-        const intro = (await this.llm.insult('intro message').catch(() => '')) || GREETING;
-        if (now() !== 'loading') return;
+        // The chat opens with a roast from the pool: no model call, so it starts at once
+        const intro = nextRoast();
         this.history.push({ role: 'assistant', content: intro });
         this.setState('speaking');
         await this.speak([intro], ++this.turn);
@@ -253,9 +251,16 @@ export class VoiceChat {
     // what it said, so it's left out only for the turn that copied.
     const previous = [...this.history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
     const reply = await this.generate(turn, this.prompt(note), previous);
-    if (reply !== COPIED) return reply;
+    if (reply !== COPIED && (reply || turn !== this.turn)) return reply;
     console.info('[voice] the reply copied the last one: written again without it in view');
-    return (await this.generate(turn, this.prompt(note, true), '')) as string;
+    const again = await this.generate(turn, this.prompt(note, true), previous);
+    if (again !== COPIED && again) return again;
+    // Copied again, or nothing said: a roast from the pool instead
+    if (turn !== this.turn) return '';
+    const roast = nextRoast();
+    console.info(`[voice] no usable reply: a roast from the pool instead`);
+    await this.speak([roast], turn);
+    return roast;
   }
 
   /**

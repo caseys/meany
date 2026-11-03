@@ -1,0 +1,100 @@
+// Roasts hand-picked from r/RoastMe comments (gus-gustavo/reddit_roastme on Hugging Face), filtered
+// first to short lines that swear, speak to "you", and don't lean on the photo, the thread, or anyone's
+// identity, health or family; then chosen by hand and lightly cleaned up. The chat opens with one, and
+// one stands in for a reply that fails (see VoiceChat.answer). Shuffled, so none repeats until all have
+// been said.
+
+const ROASTS = [
+  'Not even your fingers would fuck you sober.',
+  'I sincerely doubt anyone has fucked you in a long time.',
+  "Guess you're always the charity fuck, but no one follows through.",
+  'You are trying way too fucking hard.',
+  'Like you have a fucking choice.',
+  'Your coworkers definitely talk shit about you behind your back.',
+  'Write your own fucking material, bitch.',
+  'You only showered because you got sent home for smelling like shit.',
+  'You are what happens when you piss off God.',
+  "There's no way you're not in the same shitty band you started in college.",
+  "Hope you like working more than retirement. That debt'll follow you to the fucking grave.",
+  "You seem like you're one shitty day away from marrying your cats.",
+  'I think society already fucked you up.',
+  "You've farted then shit your pants more times than you'll ever admit.",
+  "You're like taking a piss for too long. Everyone's wondering what you're up to, but you're too comfortable to stop.",
+  'What a fucking mess you are!',
+  'No one gives a fuck about your startup.',
+  'Everyone you know is tired of your shit.',
+  'Your wife is fucking the mailman.',
+  'Clean that fucking hole you live in.',
+  'Life is the only thing that has fucked you.',
+  "You're the basic bitch of basic bitches.",
+  'You are way too old for this shit.',
+  "Damn, you've definitely been cheated on.",
+  "You've got to be shitting me, someone gave birth to that?",
+  'Please stop calling me, you stupid fuck.',
+  "You're that uninsured texting driver everybody bitches about.",
+  "Putting together a shit sandwich doesn't make you a chef.",
+  'How the fuck did you get out of the retirement home this time?',
+  'I bet you love shitting your pants. Twice.',
+  "You've definitely got never been fucked bass player energy.",
+  "Don't. Nobody wants to watch that shit, even you.",
+  'Life really fucked you over from day zero.',
+  'Who the fuck let you out of your cage to breed?',
+  "I wouldn't fuck you with a stolen cock.",
+  'I bet you have a small dick.',
+  'I bet your chili tastes really mild and crappy.',
+  "There's no way you don't smell like cat piss!",
+  'Stop lying, you old piss drinker.',
+  'Where the fuck are you even getting internet from?',
+  'How much fucking air do you need, man? Jesus.',
+  'I bet shit gets messy and weird when you eat a cupcake.',
+  'Go fuck someone, you dumb bitch.',
+  "I can assure you they ain't your friends. They're fucking liars.",
+  "No matter what you do, you can't hide that you're old as fuck.",
+  "I love how natural you are. It's obvious you're a complete fucking moron, but I love it nonetheless.",
+  'Why the fuck did you have a big ego in the first place?',
+  'Who the fuck let you out of the basement?',
+  'At least time keeps fucking you, right?',
+  'How you gonna be greasy and ashy at the same damn time?',
+  'You got no feelings and no bitches. Tough.',
+  'How fucked up are you that you have zero friends?',
+  'Your friends are either the biggest fucking liars to ever exist, or imaginary.',
+  'How the fuck do you have an ego?',
+  'I bet you wake up every day and think, eh, fuck it.',
+  "You'd fuck on the first date, but you haven't had one since 2019.",
+  'Even SpongeBob is pissed at your presence!',
+  'Alakazam! Alakazoo! No one wants to fuck you.',
+  'Life gave you lemons, and you made fuck all.',
+  'How anyone stays sober around you is a fucking miracle.',
+  'Your life fucking hates you too.',
+  'I think life fucks you on the daily.',
+  'Your roommates hate you, you cheeky bastard.',
+  'Pigeons gladly shit on you.',
+  'You can afford gas but not a fucking toothbrush?',
+  'Evolution left your ass behind.',
+  "Thankfully Jesus loves you, because everyone else thinks you're a twat.",
+  'You definitely stand up when you shit.',
+  'I bet your grilled cheese sucks ass.',
+  'Jesus, what fucking sewer did you crawl out of?',
+  'Where the fuck did you ever get self esteem?',
+  'You definitely fuck on the first date and cry afterwards.',
+  'I bet your chicken tastes like ass.',
+  "You'd be a shit superhero. You can only fight during the day, because your weakness is light bulbs.",
+  'What the fuck are you doing with a phone?',
+  'I guess you can be both an egghead and a dickhead.',
+  'Too bad you had all that extra time to become a serial douchebag.',
+  "You know you're dating a wanker, right?",
+];
+
+let bag: string[] = [];
+
+/** A roast from the pool, none repeated until all have been said */
+export function nextRoast(): string {
+  if (bag.length === 0) {
+    bag = [...ROASTS];
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+  }
+  return bag.pop()!;
+}
