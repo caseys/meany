@@ -251,17 +251,18 @@ export class VoiceChat {
     if (turn === this.turn) this.events.onEmoji?.(emojiFor(text));
   }
 
-  /** The system prompt and as much recent conversation as the context holds, with room for the reply */
+  /** The system prompt and as much of what the user has said as the context holds, with room for the reply */
   private prompt(note = ''): ChatMessage[] {
     let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(SYSTEM_PROMPT) - roughTokens(note) - 64;
+    // Only the user's side of the conversation: shown its own earlier replies, the model copied the
+    // last one, often word for word (9 of 9 turns in a 10-turn test; 0 of 9 without them)
+    const said = this.history.filter((m) => m.role === 'user');
     const kept: ChatMessage[] = [];
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      room -= roughTokens(this.history[i].content);
+    for (let i = said.length - 1; i >= 0; i--) {
+      room -= roughTokens(said[i].content);
       if (room < 0 && kept.length > 0) break;
-      kept.unshift(this.history[i]);
+      kept.unshift(said[i]);
     }
-    // The chat template wants the user first after the system prompt
-    while (kept.length > 1 && kept[0].role === 'assistant') kept.shift();
     // A plan or a looked-up fact goes with this turn's words only, never into the history
     if (note && kept.length) kept[kept.length - 1] = { ...kept[kept.length - 1], content: `${kept[kept.length - 1].content}\n\n(${note})` };
     return [{ role: 'system', content: SYSTEM_PROMPT }, ...kept];
