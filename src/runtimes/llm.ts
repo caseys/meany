@@ -273,6 +273,27 @@ export class VoiceLlm {
     return (withoutThinking(text) ?? '').trim().replace(/^["'“]+|["'”]+$/g, '');
   }
 
+  /**
+   * A roast that calls back to what they've told the bot (one line per topic, their words as said),
+   * written with no conversation: only the persona and the list, so the details are right in front
+   * of the model (in the chat history it mostly didn't bring them back).
+   */
+  async callback(persona: string, known: string[], style: ReplyStyle = {}): Promise<string> {
+    await this.load();
+    const { text } = await this.client!.complete({
+      messages: [
+        { role: 'system', content: `You are a mean, vulgar roast bot who talks like ${persona}. Everything you write is read aloud.` },
+        { role: 'user', content: `What you know about them:\n${known.join('\n')}\nRoast them about some of this in one or two short sentences. Swear a lot, like fuck and shit. No formatting.` },
+      ],
+      ...SAMPLING,
+      ...style.sampling,
+      max_tokens: 80,
+      logit_bias: NO_GENDER,
+      extra_body: { enable_thinking: false },
+    });
+    return (withoutThinking(text) ?? '').trim().replace(/\s+/g, ' ');
+  }
+
   /** A short plan for answering a request, written with no conversation (only the request) */
   async plan(request: string): Promise<string> {
     await this.load();

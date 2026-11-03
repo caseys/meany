@@ -21,13 +21,27 @@ import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
 import { keepAwake } from './core/keep-awake.ts';
 import { nextRoast } from './runtimes/roasts.ts';
-import { nextQuestion } from './runtimes/questions.ts';
+import { nameQuestion, nextNag, nextQuestion, TOPIC_LABEL } from './runtimes/questions.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
-/** The system prompt, with this turn's length (see fuzzTurn) */
-const systemPrompt = (sentences: number) =>
-  `You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to ${SPOKEN_LENGTH[sentences] ?? 'one or two short sentences'}, with no formatting.`;
+/** One per session, so each chat has its own voice: a phrase finishing "a mean, vulgar roast bot who talks like…" */
+const PERSONAS = [
+  'a burned-out drill sergeant',
+  'a disappointed grandma',
+  'a trash-talking sports announcer',
+  'a snobby butler who hates their job',
+  'a washed-up stand-up comic',
+  'a bitter reality show judge',
+  'a pirate with a hangover',
+  'a mean high school gym teacher',
+];
+
+/** The system prompt: the session's persona, their name once they've said it, and this turn's length (see fuzzTurn) */
+const systemPrompt = (sentences: number, persona: string, name?: string) =>
+  `You are a mean, vulgar roast bot who talks like ${persona}, in a spoken conversation. Everything you write is read aloud.` +
+  (name ? ` When you asked their name, they said: "${name}".` : '') +
+  ` Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to ${SPOKEN_LENGTH[sentences] ?? 'one or two short sentences'}, with no formatting.`;
 const SPOKEN_LENGTH: Record<number, string> = {
   1: 'one short sentence',
   2: 'one or two short sentences',
@@ -50,6 +64,15 @@ const LENGTHS: Array<[weight: number, sentences: number]> = [
 ];
 /** Tokens a reply may use per sentence it may run to */
 const TOKENS_PER_SENTENCE = 60;
+/** Every this many turns (once two answers are known), a roast that calls back to what they've told the bot */
+const CALLBACK_EVERY = 5;
+/** How often the opener asks their name; later, how often a turn does until they've said it */
+const OPENER_NAME_ODDS = 0.4;
+const NAME_ODDS = 0.15;
+/** Silence while it's their turn brings a nag after a random wait in this range, at most this many in a row */
+const NAG_MIN_MS = 10_000;
+const NAG_MAX_MS = 60_000;
+const MAX_NAGS = 3;
 /** How often a turn ends with the app's question (never two turns in a row without one); otherwise a roast from the pool */
 const QUESTION_ODDS = 0.8;
 
@@ -143,12 +166,23 @@ export class VoiceChat {
   private style = fuzzTurn();
   /** The last turn ended without the app's question */
   private skippedQuestion = false;
+  /** This session's persona (see PERSONAS) */
+  private readonly persona = PERSONAS[Math.floor(Math.random() * PERSONAS.length)];
+  /** What they answered, by the topic of the question asked (their next words after it), never parsed */
+  private readonly answers = new Map<string, string>();
+  /** The topic of the question just asked: their next words answer it */
+  private askedTopic: string | null = null;
+  private turnsSinceCallback = 0;
+  private nagTimer: ReturnType<typeof setTimeout> | null = null;
+  private nagsInARow = 0;
 
   constructor(private readonly events: VoiceChatEvents = {}) {
     this.audio = new SharedAudioSubsystem(
       {
         onSpeechStarted: () => {
           this.heardInTurn = this.state === 'listening';
+          if (this.nagTimer !== null) clearTimeout(this.nagTimer);
+          this.nagTimer = null;
           // Still talking: the words before join this piece's turn
           if (this.heardInTurn) this.holdDecision();
         },
@@ -210,7 +244,9 @@ export class VoiceChat {
       if (now() !== 'loading') return; // stopped while loading
       if (this.history.length === 0) {
         // The chat opens with a roast from the pool: no model call, so it starts at once
-        const intro = `${nextRoast()} ${nextQuestion()}`;
+        const question = Math.random() < OPENER_NAME_ODDS ? nameQuestion() : nextQuestion();
+        this.askedTopic = question.topic;
+        const intro = `${nextRoast()} ${question.text}`;
         this.history.push({ role: 'assistant', content: intro });
         this.setState('speaking');
         await this.speak([intro], ++this.turn);
@@ -266,6 +302,10 @@ export class VoiceChat {
     this.style = fuzzTurn();
     const heard = this.pending;
     this.pending = '';
+    this.nagsInARow = 0;
+    // Their words after a question are its answer (kept as said; the model reads them)
+    if (this.askedTopic) this.answers.set(this.askedTopic, heard.slice(0, 200));
+    this.askedTopic = null;
     this.setState('thinking');
     this.events.onRoute?.(route);
     console.info(`[voice] ${route}: ${heard}`);
@@ -292,11 +332,8 @@ export class VoiceChat {
         this.setState('listening');
         return;
       }
-      // Then, on most turns, the app's question, which steers the chat to their life (see
-      // questions.ts); on the rest, a roast from the pool keeps it going instead
-      const ask = this.skippedQuestion || Math.random() < QUESTION_ODDS;
-      this.skippedQuestion = !ask;
-      const follow = ask ? nextQuestion() : nextRoast();
+      const follow = await this.followUp(turn);
+      if (turn !== this.turn) return;
       await this.speak([follow], turn);
       if (turn !== this.turn) return;
       this.history.push({ role: 'assistant', content: `${reply} ${follow}` });
@@ -390,12 +427,63 @@ export class VoiceChat {
   }
 
   /**
+   * What ends the turn after the model's reply: every few turns a callback to what they've told the
+   * bot; otherwise, on most turns, a question (their name now and then until they've said it)
+   * that steers the chat into their life; on the rest, a roast from the pool
+   */
+  private async followUp(turn: number): Promise<string> {
+    this.turnsSinceCallback++;
+    if (this.answers.size >= 2 && this.turnsSinceCallback >= CALLBACK_EVERY) {
+      this.turnsSinceCallback = 0;
+      const known = [...this.answers].map(([topic, said]) => `${TOPIC_LABEL[topic] ?? topic}: they said "${said}"`);
+      const callback = await this.llm.callback(this.persona, known, this.style.reply).catch(() => '');
+      if (turn !== this.turn) return '';
+      // Its first two sentences: asked for one or two, it often runs on
+      const segmenter = new IncrementalPhraseSegmenter();
+      const sentences = [...segmenter.push(callback), ...segmenter.flush()].slice(0, 2);
+      if (sentences.length) {
+        console.info(`[voice] callback: ${sentences.join(' ')}`);
+        return sentences.join(' ');
+      }
+    }
+    const ask = this.skippedQuestion || Math.random() < QUESTION_ODDS;
+    this.skippedQuestion = !ask;
+    if (!ask) return nextRoast();
+    const question = !this.answers.has('name') && Math.random() < NAME_ODDS ? nameQuestion() : nextQuestion();
+    this.askedTopic = question.topic;
+    return question.text;
+  }
+
+  private system(): string {
+    return systemPrompt(this.style.sentences, this.persona, this.answers.get('name'));
+  }
+
+  /** While it's their turn, silence for a while (10 to 60 s, new each time) brings a nag (a few in a row at most) */
+  private scheduleNag(): void {
+    if (this.nagTimer !== null) clearTimeout(this.nagTimer);
+    this.nagTimer = null;
+    if (this.state !== 'listening' || this.nagsInARow >= MAX_NAGS) return;
+    this.nagTimer = setTimeout(() => {
+      this.nagTimer = null;
+      if (this.state !== 'listening' || this.pending) return;
+      this.nagsInARow++;
+      const nag = nextNag();
+      const turn = ++this.turn;
+      this.history.push({ role: 'assistant', content: nag });
+      this.setState('speaking');
+      void this.speak([nag], turn).then(() => {
+        if (turn === this.turn && this.state === 'speaking') this.setState('listening');
+      });
+    }, NAG_MIN_MS + Math.random() * (NAG_MAX_MS - NAG_MIN_MS));
+  }
+
+  /**
    * The system prompt and as much recent conversation as the context holds, with room for the
    * reply, in the alternating user/assistant form the model was trained on. `withoutLastReply`
    * leaves the bot's last reply out (only after a reply copied it).
    */
   private prompt(note = '', withoutLastReply = false): ChatMessage[] {
-    let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(systemPrompt(this.style.sentences)) - roughTokens(note) - 64;
+    let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(this.system()) - roughTokens(note) - 64;
     const lastReply = withoutLastReply ? this.history.map((m) => m.role).lastIndexOf('assistant') : -1;
     const kept: ChatMessage[] = [];
     for (let i = this.history.length - 1; i >= 0; i--) {
@@ -408,7 +496,7 @@ export class VoiceChat {
     while (kept.length > 1 && kept[0].role === 'assistant') kept.shift();
     // A plan or a looked-up fact goes with this turn's words only, never into the history
     if (note && kept.length) kept[kept.length - 1] = { ...kept[kept.length - 1], content: `${kept[kept.length - 1].content}\n\n(${note})` };
-    return [{ role: 'system', content: systemPrompt(this.style.sentences) }, ...kept];
+    return [{ role: 'system', content: this.system() }, ...kept];
   }
 
   private async speak(lines: string[], turn: number): Promise<void> {
@@ -497,5 +585,6 @@ export class VoiceChat {
   private setState(state: VoiceState, detail?: string): void {
     this.state = state;
     this.events.onState?.(state, detail);
+    this.scheduleNag();
   }
 }
