@@ -1,23 +1,32 @@
 /**
- * The one model: Qwen3 0.6B with an English + JavaScript vocabulary (75,981 of its 151,936 tokens,
- * the rest almost all other scripts), cut from WebLLM's own q4f16_1 weights (335 → 292 MB), so it
- * is the same model on what it keeps. Built in Chatty (runtimes/custom-models.ts there) and hosted
- * in its R2 bucket, with its own WebGPU library: 512-token prefill chunk, 32 MB starting
- * WebAssembly memory.
+ * Our models, hosted in Chatty's R2 bucket, each cut from WebLLM's own q4f16_1 build by keeping only
+ * some of its vocabulary (the embedding rows cut byte for byte, so on what it keeps it is the same
+ * model) and run on its own WebGPU library (512-token prefill chunk, 32 MB starting WebAssembly
+ * memory):
+ *
+ * - Qwen3.5 0.8B EN (the one used): spoken English only. 55,875 of 248,070 tokens: the 30,000
+ *   commonest English words (wordfreq), acronyms, every bad word (LDNOOBW), punctuation and
+ *   numbers. Weights 424 → 313 MB; 6 of its 24 layers keep a KV cache (about 50 KB a token).
+ *   Its chat template's stop ids, Qwen3's in WebLLM's copy, point at its own end tokens.
+ * - Qwen3 0.6B EN: English and JavaScript, 75,981 of 151,936 tokens, weights 335 → 292 MB.
  */
 
 /** Where the converted weights are served from (a public R2 bucket) */
 export const CUSTOM_MODEL_HOST = 'https://pub-2f0eea461d774d24861d400d343458bf.r2.dev';
 
-export const MODEL_ID = 'Qwen3-0.6B-EN-q4f16_1-MLC';
-/** The WebLLM model it was cut from, whose record (chat template, settings) it starts from */
-const BASE_ID = 'Qwen3-0.6B-q4f16_1-MLC';
-const MODEL_LIB = 'Qwen3-0.6B-EN-q4f16_1-webgpu.wasm';
+const MODELS = [
+  { id: 'Qwen3.5-0.8B-EN-q4f16_1-MLC', base: 'Qwen3.5-0.8B-q4f16_1-MLC', lib: 'Qwen3.5-0.8B-EN-q4f16_1-webgpu.wasm' },
+  { id: 'Qwen3-0.6B-EN-q4f16_1-MLC', base: 'Qwen3-0.6B-q4f16_1-MLC', lib: 'Qwen3-0.6B-EN-q4f16_1-webgpu.wasm' },
+];
 
-/** WebLLM's record for it, from the base model's record */
+/** The model the chat uses */
+export const MODEL_ID = MODELS[0].id;
+
+/** WebLLM's records for them, from their base models' records (chat template, settings) */
 export function customModelRecords<R extends { model: string; model_id: string; model_lib: string }>(prebuilt: ReadonlyArray<R>): R[] {
-  const base = prebuilt.find((record) => record.model_id === BASE_ID);
-  if (!base) return [];
-  const folder = `${CUSTOM_MODEL_HOST}/${MODEL_ID}/`;
-  return [{ ...base, model_id: MODEL_ID, model: folder, model_lib: folder + MODEL_LIB }];
+  return MODELS.flatMap(({ id, base, lib }) => {
+    const record = prebuilt.find((r) => r.model_id === base);
+    const folder = `${CUSTOM_MODEL_HOST}/${id}/`;
+    return record ? [{ ...record, model_id: id, model: folder, model_lib: folder + lib }] : [];
+  });
 }

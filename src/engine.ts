@@ -19,7 +19,7 @@ export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaki
 const SYSTEM_PROMPT = [
   'You are a friendly assistant in a spoken conversation: the user talks to you out loud, and everything you write is read aloud to them.',
   'Answer in one to three short sentences of plain, natural spoken English.',
-  'Never use lists, headings, markdown, emoji, symbols or code.',
+  'Never use lists, formatting, emoji, symbols or code.',
   "If you don't know something, or it needs live information like news or the weather, say so briefly instead of guessing.",
 ].join('\n');
 

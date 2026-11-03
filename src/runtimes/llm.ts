@@ -19,7 +19,7 @@ import { WebLlmClient } from './webllm-client.ts';
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /** About what the first load downloads, for the bar before WebLLM reports its own */
-const MODEL_BYTES = 300_000_000;
+const MODEL_BYTES = 320_000_000;
 /** The most context asked for: a voice chat's turns are short */
 const CONTEXT_CAP = 4096;
 /** A spoken reply is a few sentences; this stops one that runs on */
