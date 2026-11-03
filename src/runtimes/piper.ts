@@ -5,7 +5,10 @@
 
 import type { WorkerRequestMessage, WorkerResponseMessage } from '../types/index.ts';
 
-export const VOICE_ID = 'en_US-hfc_female-medium';
+/** Voices hosted in our R2 bucket (see workers/tts.worker.ts): en_US-eminem-medium is simoniz0r's (MIT), trained with TextyMcSpeechy */
+export const CUSTOM_VOICES = ['en_US-eminem-medium'];
+
+export const VOICE_ID = 'en_US-eminem-medium';
 
 /** How long a sentence may take with nothing back before the worker is taken for dead (cardist's rule: ≥ 15 s) */
 const STALL_MS = 15_000;
