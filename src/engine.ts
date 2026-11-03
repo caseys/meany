@@ -21,16 +21,17 @@ import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
 import { keepAwake } from './core/keep-awake.ts';
 import { nextRoast } from './runtimes/roasts.ts';
+import { nextQuestion } from './runtimes/questions.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
 const SYSTEM_PROMPT =
-  'You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said, insult them, and ask them a question about themselves. Swear a lot, like fuck and shit. Keep it to one to three short sentences, with no formatting.';
+  'You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to one or two short sentences, with no formatting.';
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
-/** A reply is cut off after this many sentences (the roast and the question fit) */
-const MAX_SENTENCES = 3;
+/** A reply is cut off after this many sentences (the app's question follows it) */
+const MAX_SENTENCES = 2;
 /** Silence after each sentence (native Piper's sentence_silence is 0.2 s; longer, the roast and the question land apart) */
 const SENTENCE_GAP_SEC = 0.35;
 /** Utterances shorter than this are a cough or a click, not a turn */
@@ -160,7 +161,7 @@ export class VoiceChat {
       if (now() !== 'loading') return; // stopped while loading
       if (this.history.length === 0) {
         // The chat opens with a roast from the pool: no model call, so it starts at once
-        const intro = nextRoast();
+        const intro = `${nextRoast()} ${nextQuestion()}`;
         this.history.push({ role: 'assistant', content: intro });
         this.setState('speaking');
         await this.speak([intro], ++this.turn);
@@ -236,8 +237,16 @@ export class VoiceChat {
       const reply = await this.answer(turn, note);
       await saying;
       if (turn !== this.turn) return;
-      if (reply) this.history.push({ role: 'assistant', content: reply });
-      else this.history.pop(); // nothing said: the turn didn't happen
+      if (!reply) {
+        this.history.pop(); // nothing said: the turn didn't happen
+        this.setState('listening');
+        return;
+      }
+      // Then the app's question, which steers the chat to their life (see questions.ts)
+      const question = nextQuestion();
+      await this.speak([question], turn);
+      if (turn !== this.turn) return;
+      this.history.push({ role: 'assistant', content: `${reply} ${question}` });
       this.setState('listening');
     } catch (err) {
       if (turn !== this.turn) return;
