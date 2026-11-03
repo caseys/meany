@@ -31,8 +31,8 @@ const SYSTEM_PROMPT =
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
 /** A reply is cut off after this many sentences (the roast and the question fit) */
 const MAX_SENTENCES = 3;
-/** Silence after each sentence, as native Piper's sentence_silence */
-const SENTENCE_GAP_SEC = 0.2;
+/** Silence after each sentence (native Piper's sentence_silence is 0.2 s; longer, the roast and the question land apart) */
+const SENTENCE_GAP_SEC = 0.35;
 /** Utterances shorter than this are a cough or a click, not a turn */
 const MIN_UTTERANCE_MS = 300;
 /** A pause this long (12 frames of ~85 ms, about 1 s) ends the user's turn: answered at once */
