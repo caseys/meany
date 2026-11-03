@@ -18,6 +18,17 @@ const STALL_MS = 15_000;
 
 class StalledError extends Error {}
 
+/** How a turn is spoken: Piper's length_scale (1 / speed), noise_scale and noise_w, nudged per turn */
+export interface VoiceTuning {
+  lengthScale: number;
+  noiseScale: number;
+  noiseW: number;
+}
+
+/** The voice's own variation settings (its config's noise_scale and noise_w) */
+export const BASE_NOISE_SCALE = 0.667;
+export const BASE_NOISE_W = 0.8;
+
 export interface Speech {
   samples: Float32Array;
   sampleRate: number;
@@ -61,11 +72,11 @@ export class PiperVoice {
    * end a worker for memory without an error event): it is replaced, its voice reloaded from the
    * cache, and the sentence asked once more.
    */
-  async synthesize(text: string, turnId: string): Promise<Speech> {
+  async synthesize(text: string, turnId: string, tuning?: VoiceTuning): Promise<Speech> {
     for (let attempt = 0; ; attempt++) {
       try {
         await this.load();
-        const result = await this.withTimeout(this.ask<{ samples: Float32Array; sampleRate: number }>('synthesize', turnId, { text }));
+        const result = await this.withTimeout(this.ask<{ samples: Float32Array; sampleRate: number }>('synthesize', turnId, { text, tuning }));
         return { samples: result.samples, sampleRate: result.sampleRate };
       } catch (err) {
         if (attempt > 0 || !(err instanceof StalledError)) throw err;

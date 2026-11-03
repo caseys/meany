@@ -8,7 +8,7 @@ import { HF_BASE, PATH_MAP } from '@realtimex/piper-tts-web';
 import type { WorkerRequestMessage, WorkerResponseMessage } from '../types/index.ts';
 import { PiperTtsProvider } from '../runtimes/tts-provider.ts';
 import { CUSTOM_MODEL_HOST } from '../runtimes/custom-models.ts';
-import { CUSTOM_VOICES, SPEED, VOICE_ID } from '../runtimes/piper.ts';
+import { BASE_NOISE_SCALE, BASE_NOISE_W, CUSTOM_VOICES, SPEED, VOICE_ID, type VoiceTuning } from '../runtimes/piper.ts';
 import { isAppleMobile } from '../core/device.ts';
 
 // One thread on iPhone and iPad. piper-tts-web gives ONNX Runtime a thread per core (six on an
@@ -55,6 +55,30 @@ async function dropStoredConfig(voiceId: string): Promise<void> {
   }
 }
 
+// Each sentence's speed and variation. piper-tts-web reads length_scale, noise_scale and noise_w
+// from the voice's config on every sentence but takes no per-call values, and keeps the parsed config
+// to itself: so the voice config, as it's parsed, gets an inference section whose values are read
+// from here, which each synthesize request sets (a turn's nudge, see engine.ts fuzzTurn).
+let tuning: VoiceTuning = { lengthScale: +(1 / SPEED).toFixed(3), noiseScale: BASE_NOISE_SCALE, noiseW: BASE_NOISE_W };
+const parse = JSON.parse;
+JSON.parse = ((text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) => {
+  const value = parse(text, reviver);
+  if (value && typeof value === 'object' && 'inference' in value && 'espeak' in value && 'audio' in value) {
+    value.inference = {
+      get length_scale() {
+        return tuning.lengthScale;
+      },
+      get noise_scale() {
+        return tuning.noiseScale;
+      },
+      get noise_w() {
+        return tuning.noiseW;
+      },
+    };
+  }
+  return value;
+}) as typeof JSON.parse;
+
 let ttsProvider = new PiperTtsProvider(VOICE_ID);
 const activeControllers = new Map<string, AbortController>();
 
@@ -98,6 +122,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequestMessage<any>>) => {
       }
 
       case 'synthesize': {
+        if (payload?.tuning) tuning = payload.tuning;
         const controller = new AbortController();
         activeControllers.set(turnId, controller);
         try {

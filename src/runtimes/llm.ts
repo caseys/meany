@@ -18,6 +18,12 @@ import { WebLlmClient } from './webllm-client.ts';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
+/** One turn's sampling, nudged around SAMPLING (see engine.ts fuzzTurn), and its token cap */
+export interface ReplyStyle {
+  sampling?: { temperature: number; top_p: number; presence_penalty: number; frequency_penalty: number };
+  maxTokens?: number;
+}
+
 /** About what the first load downloads, for the bar before WebLLM reports its own */
 const MODEL_BYTES = 320_000_000;
 /** The most context asked for: a voice chat's turns are short */
@@ -39,7 +45,7 @@ const WEBLLM_CACHE = 'webllm/model';
  * loops, and kept the persona. The presence penalty stays against the loops small models fall
  * into; the cut vocabulary keeps it from drifting into another language.
  */
-const SAMPLING = { temperature: 0.85, top_p: 0.9, presence_penalty: 1.0, frequency_penalty: 0.3 };
+export const SAMPLING = { temperature: 0.85, top_p: 0.9, presence_penalty: 1.0, frequency_penalty: 0.3 };
 
 /**
  * The reply with any leading <think>...</think> block removed, or null while that block is
@@ -218,10 +224,17 @@ export class VoiceLlm {
   }
 
   /** The reply to the conversation, piece by piece as it is written (thinking left out) */
-  async *reply(messages: ChatMessage[], signal?: AbortSignal): AsyncGenerator<string, void> {
+  async *reply(messages: ChatMessage[], signal?: AbortSignal, style: ReplyStyle = {}): AsyncGenerator<string, void> {
     await this.load();
     const client = this.client!;
-    const request: WebLlmChatRequest = { messages, ...SAMPLING, max_tokens: MAX_REPLY_TOKENS, logit_bias: NO_GENDER, extra_body: { enable_thinking: false } };
+    const request: WebLlmChatRequest = {
+      messages,
+      ...SAMPLING,
+      ...style.sampling,
+      max_tokens: style.maxTokens ?? MAX_REPLY_TOKENS,
+      logit_bias: NO_GENDER,
+      extra_body: { enable_thinking: false },
+    };
     const onAbort = () => client.interrupt();
     signal?.addEventListener('abort', onAbort, { once: true });
     let raw = '';

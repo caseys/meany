@@ -14,8 +14,8 @@
 
 import { SharedAudioSubsystem } from './audio/audio-subsystem.ts';
 import { IncrementalPhraseSegmenter, normalizeTextForSpeech } from './core/speech-normalizer.ts';
-import { MAX_REPLY_TOKENS, roughTokens, VoiceLlm, type ChatMessage, type Route } from './runtimes/llm.ts';
-import { PiperVoice } from './runtimes/piper.ts';
+import { MAX_REPLY_TOKENS, roughTokens, SAMPLING, VoiceLlm, type ChatMessage, type ReplyStyle, type Route } from './runtimes/llm.ts';
+import { BASE_NOISE_SCALE, BASE_NOISE_W, PiperVoice, SPEED, type VoiceTuning } from './runtimes/piper.ts';
 import { WhistleSttProvider } from './runtimes/stt-provider.ts';
 import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
@@ -25,13 +25,58 @@ import { nextQuestion } from './runtimes/questions.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
-const SYSTEM_PROMPT =
-  'You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to one or two short sentences, with no formatting.';
+/** The system prompt, with this turn's length (see fuzzTurn) */
+const systemPrompt = (sentences: number) =>
+  `You are a mean, vulgar roast bot in a spoken conversation. Everything you write is read aloud. Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to ${SPOKEN_LENGTH[sentences] ?? 'one or two short sentences'}, with no formatting.`;
+const SPOKEN_LENGTH: Record<number, string> = {
+  1: 'one short sentence',
+  2: 'one or two short sentences',
+  3: 'three short sentences',
+  4: 'three or four short sentences',
+  5: 'five short sentences',
+  6: 'five or six short sentences',
+};
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
-/** A reply is cut off after this many sentences (the app's question follows it) */
-const MAX_SENTENCES = 2;
+/** How many sentences a reply may run to, picked each turn: half, as usual, twice as long, rarely three times */
+const LENGTHS: Array<[weight: number, sentences: number]> = [
+  [0.25, 1],
+  [0.5, 2],
+  [0.12, 3],
+  [0.08, 4],
+  [0.03, 5],
+  [0.02, 6],
+];
+/** Tokens a reply may use per sentence it may run to */
+const TOKENS_PER_SENTENCE = 60;
+/** How often a turn ends with the app's question (never two turns in a row without one); otherwise a roast from the pool */
+const QUESTION_ODDS = 0.8;
+
+const around = (base: number, spread: number) => base * (1 + (Math.random() * 2 - 1) * spread);
+
+/** One turn's style: how long the reply may run, how it's sampled, and how it's spoken, each nudged a little */
+function fuzzTurn(): { sentences: number; reply: ReplyStyle; voice: VoiceTuning } {
+  let pick = Math.random();
+  const sentences = (LENGTHS.find(([weight]) => (pick -= weight) < 0) ?? LENGTHS[1])[1];
+  return {
+    sentences,
+    reply: {
+      sampling: {
+        temperature: Math.min(0.95, Math.max(0.75, around(SAMPLING.temperature, 0.12))),
+        top_p: Math.min(0.95, Math.max(0.85, around(SAMPLING.top_p, 0.06))),
+        presence_penalty: around(SAMPLING.presence_penalty, 0.2),
+        frequency_penalty: around(SAMPLING.frequency_penalty, 0.2),
+      },
+      maxTokens: sentences * TOKENS_PER_SENTENCE,
+    },
+    voice: {
+      lengthScale: around(1 / SPEED, 0.06),
+      noiseScale: Math.min(0.9, around(BASE_NOISE_SCALE, 0.08)),
+      noiseW: Math.min(0.95, around(BASE_NOISE_W, 0.08)),
+    },
+  };
+}
 /** Silence after each sentence (native Piper's sentence_silence is 0.2 s; longer, the roast and the question land apart) */
 const SENTENCE_GAP_SEC = 0.35;
 /** Utterances shorter than this are a cough or a click, not a turn */
@@ -94,6 +139,10 @@ export class VoiceChat {
   private pending = '';
   /** Bumped by new speech: words still being written down join the next piece's turn */
   private decision = 0;
+  /** This turn's style (see fuzzTurn) */
+  private style = fuzzTurn();
+  /** The last turn ended without the app's question */
+  private skippedQuestion = false;
 
   constructor(private readonly events: VoiceChatEvents = {}) {
     this.audio = new SharedAudioSubsystem(
@@ -214,6 +263,7 @@ export class VoiceChat {
   /** The bot's turn: the pending words answered by `route` */
   private async respond(route: Route): Promise<void> {
     const turn = ++this.turn;
+    this.style = fuzzTurn();
     const heard = this.pending;
     this.pending = '';
     this.setState('thinking');
@@ -242,11 +292,14 @@ export class VoiceChat {
         this.setState('listening');
         return;
       }
-      // Then the app's question, which steers the chat to their life (see questions.ts)
-      const question = nextQuestion();
-      await this.speak([question], turn);
+      // Then, on most turns, the app's question, which steers the chat to their life (see
+      // questions.ts); on the rest, a roast from the pool keeps it going instead
+      const ask = this.skippedQuestion || Math.random() < QUESTION_ODDS;
+      this.skippedQuestion = !ask;
+      const follow = ask ? nextQuestion() : nextRoast();
+      await this.speak([follow], turn);
       if (turn !== this.turn) return;
-      this.history.push({ role: 'assistant', content: `${reply} ${question}` });
+      this.history.push({ role: 'assistant', content: `${reply} ${follow}` });
       this.setState('listening');
     } catch (err) {
       if (turn !== this.turn) return;
@@ -294,14 +347,14 @@ export class VoiceChat {
       speaking = this.speakStream(sentences, turn);
       this.showEmoji(text, turn);
     };
-    for await (const piece of this.llm.reply(messages, this.abort.signal)) {
+    for await (const piece of this.llm.reply(messages, this.abort.signal, this.style.reply)) {
       if (turn !== this.turn) break;
       text += piece;
       const done = segmenter.push(piece);
       said.push(...done);
       sentences.push(...done);
       // Long enough: the rest isn't written (a roast and a question fit in three sentences)
-      const enough = said.length >= MAX_SENTENCES;
+      const enough = said.length >= this.style.sentences;
       if (enough) this.abort.abort();
       if (!speaking && sentences.length) {
         if (previous.some((reply) => copies(sentences[0], reply))) {
@@ -313,8 +366,8 @@ export class VoiceChat {
       speaking?.wake();
       if (enough) break;
     }
-    // (cut off at MAX_SENTENCES, the unfinished rest isn't said)
-    if (said.length < MAX_SENTENCES) {
+    // (cut off at this turn's length, the unfinished rest isn't said)
+    if (said.length < this.style.sentences) {
       const rest = segmenter.flush();
       said.push(...rest);
       sentences.push(...rest);
@@ -342,7 +395,7 @@ export class VoiceChat {
    * leaves the bot's last reply out (only after a reply copied it).
    */
   private prompt(note = '', withoutLastReply = false): ChatMessage[] {
-    let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(SYSTEM_PROMPT) - roughTokens(note) - 64;
+    let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(systemPrompt(this.style.sentences)) - roughTokens(note) - 64;
     const lastReply = withoutLastReply ? this.history.map((m) => m.role).lastIndexOf('assistant') : -1;
     const kept: ChatMessage[] = [];
     for (let i = this.history.length - 1; i >= 0; i--) {
@@ -355,7 +408,7 @@ export class VoiceChat {
     while (kept.length > 1 && kept[0].role === 'assistant') kept.shift();
     // A plan or a looked-up fact goes with this turn's words only, never into the history
     if (note && kept.length) kept[kept.length - 1] = { ...kept[kept.length - 1], content: `${kept[kept.length - 1].content}\n\n(${note})` };
-    return [{ role: 'system', content: SYSTEM_PROMPT }, ...kept];
+    return [{ role: 'system', content: systemPrompt(this.style.sentences) }, ...kept];
   }
 
   private async speak(lines: string[], turn: number): Promise<void> {
@@ -387,7 +440,7 @@ export class VoiceChat {
         // (emoji too: the prompt asks for none, but a small model writes them anyway)
         const spoken = normalizeTextForSpeech(next.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, ''));
         if (!spoken) continue;
-        const speech = await this.voice.synthesize(spoken, `turn_${turn}`).catch((err) => {
+        const speech = await this.voice.synthesize(spoken, `turn_${turn}`, this.style.voice).catch((err) => {
           console.warn('[voice] sentence not spoken', err);
           return null;
         });
