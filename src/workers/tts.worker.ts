@@ -9,6 +9,19 @@ import type { WorkerRequestMessage, WorkerResponseMessage } from '../types/index
 import { PiperTtsProvider } from '../runtimes/tts-provider.ts';
 import { CUSTOM_MODEL_HOST } from '../runtimes/custom-models.ts';
 import { CUSTOM_VOICES, SPEED, VOICE_ID } from '../runtimes/piper.ts';
+import { isAppleMobile } from '../core/device.ts';
+
+// One thread on iPhone and iPad. piper-tts-web gives ONNX Runtime a thread per core (six on an
+// iPhone) when the page is cross-origin isolated, as this one is: every thread is another worker
+// on a shared WebAssembly memory, and next to the chat model that allocation failed on an iPhone
+// ("RangeError: Out of memory" in initWasm). Chatty's Piper ran single-threaded there.
+if (isAppleMobile()) {
+  try {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 1, configurable: true });
+  } catch {
+    // Non-configurable: left as it is
+  }
+}
 
 // Voices piper-tts-web doesn't list, hosted in our R2 bucket: each gets a place in its list of
 // voice paths (it only knows its own Hugging Face mirror), and this worker's fetches of that place

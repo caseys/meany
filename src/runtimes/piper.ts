@@ -31,11 +31,29 @@ export class PiperVoice {
 
   /** Loads the voice (downloading it the first time); onProgress gets 0..1 */
   load(onProgress?: (fraction: number) => void): Promise<void> {
-    this.ready ??= this.ask<void>('init', 'init', { voiceId: VOICE_ID }, (loaded, total) => total > 0 && onProgress?.(loaded / total)).catch((err) => {
+    this.ready ??= this.loadOnce(onProgress).catch((err) => {
       this.ready = null;
       throw err;
     });
     return this.ready;
+  }
+
+  /**
+   * One load, and one more if the first ran out of memory: the worker is ended (which frees all it
+   * held) and a fresh one tries again after a breath. iPhone Safari's memory is tight next to the
+   * chat model, and how much is free varies.
+   */
+  private async loadOnce(onProgress?: (fraction: number) => void): Promise<void> {
+    const init = () => this.ask<void>('init', 'init', { voiceId: VOICE_ID }, (loaded, total) => total > 0 && onProgress?.(loaded / total));
+    try {
+      await init();
+    } catch (err) {
+      if (!/out of memory/i.test(String(err))) throw err;
+      console.warn('[piper] out of memory starting the voice: trying once more in a fresh worker', err);
+      this.restart();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await init();
+    }
   }
 
   /**
