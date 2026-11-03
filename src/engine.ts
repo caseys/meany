@@ -29,6 +29,8 @@ const SYSTEM_PROMPT =
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
+/** How many of the user's earlier messages go with each turn (see respond) */
+const EARLIER_MESSAGES = 8;
 /** Silence after each sentence, as native Piper's sentence_silence */
 const SENTENCE_GAP_SEC = 0.2;
 /** Utterances shorter than this are a cough or a click, not a turn */
@@ -229,6 +231,18 @@ export class VoiceChat {
           : "A Wikipedia search found nothing for this: say you couldn't look it up.";
       }
       if (turn !== this.turn) return;
+      // What the user said earlier, as plain sentences with the turn's own words: told in the
+      // prompt only, the model didn't use what users said about themselves (1 of 6 roasts); handed
+      // over with each turn, it did (6 of 6). Kept to the last few, and never parsed.
+      const earlier = this.history
+        .slice(0, -1)
+        .filter((m) => m.role === 'user')
+        .slice(-EARLIER_MESSAGES)
+        .map((m) => (/[.!?]$/.test(m.content.trim()) ? m.content.trim() : `${m.content.trim()}.`));
+      if (earlier.length) {
+        const told = `Earlier in this chat, the user told you: ${earlier.join(' ')} Roast them using what they told you about themselves.`;
+        note = note ? `${note}\n${told}` : told;
+      }
       const reply = await this.answer(turn, note);
       await saying;
       if (turn !== this.turn) return;
