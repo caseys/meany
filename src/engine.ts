@@ -37,6 +37,33 @@ const MIN_UTTERANCE_MS = 300;
 /** A pause this long (12 frames of ~85 ms, about 1 s) ends the user's turn: answered at once */
 const PAUSE_FRAMES = 12;
 
+/** A reply that copied the bot's last one (see VoiceChat.answer) */
+const COPIED = Symbol('copied');
+
+/** The words of a text, lowercase, in threes */
+function wordTriples(text: string): Set<string> {
+  const words = text.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const triples = new Set<string>();
+  for (let i = 0; i + 2 < words.length; i++) triples.add(words.slice(i, i + 3).join(' '));
+  return triples;
+}
+
+/**
+ * A sentence copied from `previous`: most of its three-word runs are in it (a short sentence, the
+ * same words as the start of `previous`).
+ */
+function copies(sentence: string, previous: string): boolean {
+  const mine = wordTriples(sentence);
+  if (mine.size < 2) {
+    const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    return !!norm(sentence) && norm(previous).startsWith(norm(sentence));
+  }
+  const theirs = wordTriples(previous);
+  let shared = 0;
+  for (const t of mine) if (theirs.has(t)) shared++;
+  return shared / mine.size >= 0.6;
+}
+
 export interface VoiceChatEvents {
   onState?: (state: VoiceState, detail?: string) => void;
   /** Loading, 0..1 over all three models */
@@ -220,29 +247,53 @@ export class VoiceChat {
 
   /** Streams the reply into speech, a sentence at a time; returns what was said */
   private async answer(turn: number, note = ''): Promise<string> {
+    // The bot's last reply: a reply that starts by copying it is written again without it in view.
+    // The model copies its own last reply when the user gives it little to answer ("okay
+    // whatever"); without that reply in the prompt it never did, but then it can't follow up on
+    // what it said, so it's left out only for the turn that copied.
+    const previous = [...this.history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
+    const reply = await this.generate(turn, this.prompt(note), previous);
+    if (reply !== COPIED) return reply;
+    console.info('[voice] the reply copied the last one: written again without it in view');
+    return (await this.generate(turn, this.prompt(note, true), '')) as string;
+  }
+
+  /**
+   * One reply, streamed into speech a sentence at a time. With `previous`, the first sentence is
+   * held until it's checked: a copy of `previous` stops the reply before anything is said (COPIED).
+   */
+  private async generate(turn: number, messages: ChatMessage[], previous: string): Promise<string | typeof COPIED> {
     this.abort = new AbortController();
     const segmenter = new IncrementalPhraseSegmenter();
     const sentences: string[] = [];
     let text = '';
-    const speaking = this.speakStream(sentences, turn);
-    const wake = speaking.wake;
-    let emojiAsked = false;
-    for await (const piece of this.llm.reply(this.prompt(note), this.abort.signal)) {
+    // (set inside startSpeaking: typed so TypeScript doesn't take it as always null)
+    let speaking = null as ReturnType<VoiceChat['speakStream']> | null;
+    const startSpeaking = () => {
+      speaking = this.speakStream(sentences, turn);
+      this.showEmoji(text, turn);
+    };
+    for await (const piece of this.llm.reply(messages, this.abort.signal)) {
       if (turn !== this.turn) break;
       text += piece;
-      const done = segmenter.push(piece);
-      // The emoji from the first sentence, so it shows as the voice starts
-      if (done.length && !emojiAsked) {
-        emojiAsked = true;
-        this.showEmoji(text, turn);
+      sentences.push(...segmenter.push(piece));
+      if (!speaking && sentences.length) {
+        if (previous && copies(sentences[0], previous)) {
+          this.abort.abort();
+          return COPIED;
+        }
+        startSpeaking();
       }
-      sentences.push(...done);
-      wake();
+      speaking?.wake();
     }
-    if (!emojiAsked) this.showEmoji(text, turn);
     sentences.push(...segmenter.flush());
-    speaking.close();
-    await speaking.done;
+    if (!speaking) {
+      // (a reply shorter than one sentence is checked whole)
+      if (previous && text.trim() && copies(text, previous)) return COPIED;
+      startSpeaking();
+    }
+    speaking!.close();
+    await speaking!.done;
     console.info(`[voice] said: ${text.trim()}`);
     return text.trim();
   }
@@ -251,18 +302,23 @@ export class VoiceChat {
     if (turn === this.turn) this.events.onEmoji?.(emojiFor(text));
   }
 
-  /** The system prompt and as much of what the user has said as the context holds, with room for the reply */
-  private prompt(note = ''): ChatMessage[] {
+  /**
+   * The system prompt and as much recent conversation as the context holds, with room for the
+   * reply, in the alternating user/assistant form the model was trained on. `withoutLastReply`
+   * leaves the bot's last reply out (only after a reply copied it).
+   */
+  private prompt(note = '', withoutLastReply = false): ChatMessage[] {
     let room = this.llm.contextLimit - MAX_REPLY_TOKENS - roughTokens(SYSTEM_PROMPT) - roughTokens(note) - 64;
-    // Only the user's side of the conversation: shown its own earlier replies, the model copied the
-    // last one, often word for word (9 of 9 turns in a 10-turn test; 0 of 9 without them)
-    const said = this.history.filter((m) => m.role === 'user');
+    const lastReply = withoutLastReply ? this.history.map((m) => m.role).lastIndexOf('assistant') : -1;
     const kept: ChatMessage[] = [];
-    for (let i = said.length - 1; i >= 0; i--) {
-      room -= roughTokens(said[i].content);
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (i === lastReply) continue;
+      room -= roughTokens(this.history[i].content);
       if (room < 0 && kept.length > 0) break;
-      kept.unshift(said[i]);
+      kept.unshift(this.history[i]);
     }
+    // The chat template wants the user first after the system prompt
+    while (kept.length > 1 && kept[0].role === 'assistant') kept.shift();
     // A plan or a looked-up fact goes with this turn's words only, never into the history
     if (note && kept.length) kept[kept.length - 1] = { ...kept[kept.length - 1], content: `${kept[kept.length - 1].content}\n\n(${note})` };
     return [{ role: 'system', content: SYSTEM_PROMPT }, ...kept];
