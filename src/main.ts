@@ -42,7 +42,7 @@ function renderNote(): void {
   else if (shownState === 'loading') note.textContent = 'Getting ready…';
   else if (shownState === 'listening') note.textContent = route === 'wait' ? ROUTE_NOTE.wait : 'Listening';
   else if (shownState === 'thinking' || shownState === 'speaking') note.textContent = route && route !== 'wait' ? ROUTE_NOTE[route] : '';
-  else note.textContent = '';
+  else note.textContent = errorDetail;
 }
 
 const chat = new VoiceChat({

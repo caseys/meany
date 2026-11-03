@@ -561,6 +561,11 @@ export class SharedAudioSubsystem {
     };
   }
 
+  /** The mic is open and its track still live (iOS ends it when the page goes to the background) */
+  micLive(): boolean {
+    return this.isCapturing && !!this.mediaStream?.getAudioTracks().some((track) => track.readyState === 'live');
+  }
+
   stopMicrophoneCapture(): Float32Array | null {
     if (!this.isCapturing) {
       if (this.pendingMicStart) this.micStopRequested = true;

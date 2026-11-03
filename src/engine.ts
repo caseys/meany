@@ -8,7 +8,9 @@
 //
 // The bot is never interrupted (no barge-in, as in cardist's voice chat): while it thinks or
 // speaks, what the mic hears is ignored, which also keeps its own voice from coming back as a turn.
-// The three models load one after another, never together (the lesson from Chatty on iPhone).
+// The three models load one after another, never together (the lesson from Chatty on iPhone). The
+// screen is kept on while the chat runs, any tap wakes the audio, and a mic iOS ended while the page
+// was hidden is opened again (Chatty's lessons on devices).
 // ============================================================================
 
 import { SharedAudioSubsystem } from './audio/audio-subsystem.ts';
@@ -18,6 +20,7 @@ import { PiperVoice } from './runtimes/piper.ts';
 import { WhistleSttProvider } from './runtimes/stt-provider.ts';
 import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
+import { keepAwake } from './core/keep-awake.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
@@ -87,6 +90,32 @@ export class VoiceChat {
       },
       { silenceHangoverFrames: PAUSE_FRAMES }
     );
+    // Browsers start or resume audio only in a tap or key press: every one, anywhere on the page,
+    // wakes the one context (Safari grants it in click, touchend and keydown; Chrome in pointerdown)
+    for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+      document.addEventListener(type, () => this.audio.unlockInGesture(), true);
+    }
+    // Back on the page: iOS ends the mic's track while the page is hidden. Opened again, or if
+    // the browser won't without a tap, the chat stops and says so.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) void this.reopenMic();
+    });
+    // Leaving the page (not into the back/forward cache): mic and wake lock let go
+    window.addEventListener('pagehide', (event) => {
+      if (!event.persisted && this.state !== 'idle') this.stop();
+    });
+  }
+
+  private async reopenMic(): Promise<void> {
+    if (this.state === 'idle' || this.state === 'error' || this.state === 'loading' || this.audio.micLive()) return;
+    console.warn('[voice] the mic stopped while the page was hidden: opening it again');
+    try {
+      this.audio.stopMicrophoneCapture();
+      await this.audio.startMicrophoneCapture();
+    } catch (err) {
+      console.warn('[voice] mic not reopened', err);
+      this.stop('Paused while the page was hidden. Tap to keep talking.');
+    }
   }
 
   /** Starts the chat. Call it inside the tap: that is where the browser lets audio start. */
@@ -94,6 +123,7 @@ export class VoiceChat {
     if (this.state !== 'idle' && this.state !== 'error') return;
     this.audio.unlockInGesture();
     this.audio.setAudioSessionType('play-and-record');
+    keepAwake(true);
     this.setState('loading');
     try {
       // The mic first, so its permission is asked while the tap is fresh
@@ -118,12 +148,14 @@ export class VoiceChat {
     } catch (err) {
       console.error('[voice] start failed', err);
       this.audio.stopMicrophoneCapture();
+      this.audio.setAudioSessionType('auto');
+      keepAwake(false);
       this.setState('error', err instanceof Error ? err.message : String(err));
     }
   }
 
-  /** Ends the chat: the mic closes, the reply stops, the conversation is kept for the next start */
-  stop(): void {
+  /** Ends the chat: the mic closes, the reply stops, the conversation is kept for the next start; `why` is shown */
+  stop(why?: string): void {
     this.holdDecision();
     this.pending = '';
     this.abort?.abort();
@@ -132,7 +164,10 @@ export class VoiceChat {
     this.turn++;
     this.audio.stopAllPlaybackImmediately();
     this.audio.stopMicrophoneCapture();
-    this.setState('idle');
+    // (iOS: 'auto' again once the mic is off, as in Chatty, so other apps' sound isn't held)
+    this.audio.setAudioSessionType('auto');
+    keepAwake(false);
+    this.setState('idle', why);
   }
 
   /** Drops a decision under way, and the backstop of one that said wait */
