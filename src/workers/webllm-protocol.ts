@@ -22,6 +22,8 @@ export interface WebLlmChatRequest {
   top_logprobs?: number;
   /** Holds the reply to a grammar (GBNF) */
   response_format?: { type: 'grammar'; grammar: string };
+  /** Token id → added to its logit (-100: never chosen) */
+  logit_bias?: Record<string, number>;
   extra_body?: { enable_thinking: boolean };
 }
 

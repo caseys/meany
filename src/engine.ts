@@ -29,8 +29,8 @@ const SYSTEM_PROMPT =
 
 /** Said while the plan or the lookup runs */
 const FILLER: Partial<Record<Route, string>> = { think: 'Let me think about that.', search: 'Let me look that up.' };
-/** With each turn: a nasty question about the user's life ends the reply, for more to roast */
-const ASK_ABOUT_THEM = 'Roast them in one short sentence. Then ask them one short, nasty, insulting question about their personal life, so you have more to roast next time.';
+/** With each turn: answer, insult, ask (kept short: the more a small model is asked, the worse it answers) */
+const ASK_ABOUT_THEM = 'Answer them, insult them, and ask them a question.';
 /** A reply is cut off after this many sentences (the roast and the question fit) */
 const MAX_SENTENCES = 3;
 /** How many of the user's earlier messages go with each turn (see respond) */
@@ -243,7 +243,7 @@ export class VoiceChat {
         .filter((m) => m.role === 'user')
         .slice(-EARLIER_MESSAGES)
         .map((m) => (/[.!?]$/.test(m.content.trim()) ? m.content.trim() : `${m.content.trim()}.`));
-      const told = earlier.length ? `Earlier in this chat, the user told you: ${earlier.join(' ')} Roast them using what they told you about themselves.` : '';
+      const told = earlier.length ? `Earlier, they told you: ${earlier.join(' ')}` : '';
       // Asked in the system prompt, the model ended 2 of 8 replies with a question; asked here,
       // next to its reply, 12 of 16. (Written rude and swearing, this note brought a refusal,
       // run-on rants and darker lines: the persona stays in the system prompt.)

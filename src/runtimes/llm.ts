@@ -181,7 +181,7 @@ export class VoiceLlm {
   async *reply(messages: ChatMessage[], signal?: AbortSignal): AsyncGenerator<string, void> {
     await this.load();
     const client = this.client!;
-    const request: WebLlmChatRequest = { messages, ...SAMPLING, max_tokens: MAX_REPLY_TOKENS, extra_body: { enable_thinking: false } };
+    const request: WebLlmChatRequest = { messages, ...SAMPLING, max_tokens: MAX_REPLY_TOKENS, logit_bias: NO_GENDER, extra_body: { enable_thinking: false } };
     const onAbort = () => client.interrupt();
     signal?.addEventListener('abort', onAbort, { once: true });
     let raw = '';
@@ -240,6 +240,24 @@ export class VoiceLlm {
     this.client?.interrupt();
   }
 }
+
+/**
+ * Gendered words the bot can't say: it doesn't know who it's talking to, and with nothing to go on it
+ * kept calling users a woman, a girl, a slut, or a man, a guy. Asking it not to made it worse (it
+ * started talking about gender), so these tokens are simply never chosen (-100), and it says "you".
+ * Token ids of this model's cut vocabulary (Qwen3.5 0.8B EN), so tied to MODEL_ID: each word with a
+ * leading space, and capitalized where it starts a sentence. The bare lowercase pieces are left
+ * alone: some are also parts of other words.
+ */
+const NO_GENDER: Record<string, number> = Object.fromEntries(
+  [
+    1194, 6464, 2543, 966, 15299, 5202, 8611, 38996, 9216, 4411, 51797, 17683, 2772, 23976, 8701, 3217, 21396,
+    8976, 6196, 43524, 14894, 12717, 43985, 15236, 16592, 30998, 11765, 33288, 8455, 25812, 52307, 35725, 42405,
+    538, 1350, 1129, 1278, 15109, 748, 12159, 4470, 4666, 39513, 813, 1477, 2072, 2563, 20270, 8729, 6083, 45081,
+    18171, 6217, 32151, 23959, 47982, 6644, 38064, 12283, 10163, 20891, 2513, 18793, 4939, 29473, 6074, 28015,
+    7994, 43020, 16580, 53118, 18509, 7113, 27097, 20217, 6968, 24696, 14440, 19259, 32146, 12680,
+  ].map((id) => [String(id), -100])
+);
 
 /** How a turn is answered: wait (not yet), at once, after a short plan, or from Wikipedia */
 export type Route = 'wait' | 'answer' | 'think' | 'search';
