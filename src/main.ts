@@ -8,6 +8,10 @@ import { VoiceChat, type VoiceState } from './engine.ts';
 const button = document.getElementById('start') as HTMLButtonElement;
 const ring = button.querySelector('.ring circle') as SVGCircleElement;
 const note = document.getElementById('note') as HTMLParagraphElement;
+const emojiEl = document.getElementById('emoji') as HTMLDivElement;
+const routeEl = document.getElementById('route') as HTMLSpanElement;
+/** The badge on the button while a turn is answered after a plan or a lookup */
+const ROUTE_BADGE: Record<string, string> = { think: '💭', search: '🔎' };
 const RING_LENGTH = 351.9;
 
 const waveOut = new FluidAudioVisualizer(document.getElementById('wave-out') as HTMLCanvasElement, {
@@ -28,7 +32,22 @@ const chat = new VoiceChat({
   onState: (state, detail) => {
     document.body.className = state === 'idle' || state === 'error' ? state : `on ${state}`;
     button.setAttribute('aria-label', state === 'idle' || state === 'error' ? 'Start talking' : 'Stop');
+    if (state === 'listening' || state === 'idle') routeEl.classList.remove('shown');
     note.textContent = state === 'error' ? `Couldn't start: ${detail ?? 'unknown error'}` : (NOTES[state] ?? '');
+  },
+  onRoute: (route) => {
+    const badge = ROUTE_BADGE[route];
+    if (badge) routeEl.textContent = badge;
+    routeEl.classList.toggle('shown', !!badge);
+  },
+  onEmoji: (emoji) => {
+    emojiEl.classList.remove('shown');
+    if (!emoji) return;
+    // (a frame apart, so a new emoji pops in again)
+    requestAnimationFrame(() => {
+      emojiEl.textContent = emoji;
+      emojiEl.classList.add('shown');
+    });
   },
   onProgress: (fraction) => {
     ring.style.strokeDashoffset = String(RING_LENGTH * (1 - fraction));

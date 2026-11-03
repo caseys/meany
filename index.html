@@ -8,8 +8,12 @@
   </head>
   <body>
     <main>
-      <canvas id="wave-out" class="wave" aria-hidden="true"></canvas>
+      <div class="top">
+        <div id="emoji" aria-hidden="true"></div>
+        <canvas id="wave-out" class="wave" aria-hidden="true"></canvas>
+      </div>
       <button id="start" type="button" aria-label="Start talking">
+        <span id="route" aria-hidden="true"></span>
         <svg class="ring" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" /></svg>
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
           <path class="mic" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z" />

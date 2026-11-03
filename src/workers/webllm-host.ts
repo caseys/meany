@@ -74,7 +74,11 @@ export function createWebLlmHost(parts: WebLlmHostParts, post: (event: WebLlmEve
         void settle(request.id, async (): Promise<WebLlmCompletion> => {
           const reply = await engine.chat.completions.create({ ...request.request, stream: false });
           const choice = reply.choices[0];
-          const first = choice?.logprobs?.content?.[0];
+          // The answer's first token: after any <think>...</think> block (Qwen3.5 opens every reply
+          // with an empty one) and the blank lines around it
+          const reports = choice?.logprobs?.content ?? [];
+          const thinkEnd = reports.findIndex((r) => r.token.includes('</think>'));
+          const first = reports.slice(thinkEnd + 1).find((r) => r.token.trim() !== '');
           return {
             text: choice?.message?.content ?? '',
             firstToken: first

@@ -197,11 +197,71 @@ export class VoiceLlm {
     }
   }
 
+  /**
+   * How likely the model finds that what the user has said so far is a complete sentence or
+   * question (0..1): one pass with no conversation, reading the probabilities of "yes" and "no" at
+   * the answer's first token. Measured on 18 phrases (2026-11-03): stopped mid-sentence 0.15-0.46,
+   * complete 0.36-0.61. Asked the same way, the model couldn't tell which requests need facts or
+   * a plan (nearly everything scored high on both), so routing isn't decided here.
+   */
+  async completeness(heard: string): Promise<number> {
+    await this.load();
+    const { firstToken } = await this.client!.complete({
+      messages: [
+        { role: 'system', content: COMPLETE_PROMPT },
+        { role: 'user', content: heard },
+      ],
+      temperature: 1,
+      top_p: 1,
+      max_tokens: 8,
+      logprobs: true,
+      top_logprobs: 5,
+      extra_body: { enable_thinking: false },
+    });
+    let yes = 0;
+    let no = 0;
+    const seen = new Set<string>();
+    for (const { token, logprob } of firstToken ? [firstToken, ...firstToken.top_logprobs] : []) {
+      if (seen.has(token)) continue;
+      seen.add(token);
+      const word = token.trim().toLowerCase();
+      if (word === 'yes') yes += Math.exp(logprob);
+      else if (word === 'no') no += Math.exp(logprob);
+    }
+    return yes + no > 0 ? yes / (yes + no) : 0.5;
+  }
+
+  /** A short plan for answering a request, written with no conversation (only the request) */
+  async plan(request: string): Promise<string> {
+    await this.load();
+    const { text } = await this.client!.complete({
+      messages: [
+        { role: 'system', content: PLAN_PROMPT },
+        { role: 'user', content: request },
+      ],
+      ...SAMPLING,
+      max_tokens: 80,
+      extra_body: { enable_thinking: false },
+    });
+    return (withoutThinking(text) ?? '').trim();
+  }
+
   /** Stops the reply being written */
   interrupt(): void {
     this.client?.interrupt();
   }
 }
+
+/** How a turn is answered: wait (not yet), at once, after a short plan, or from Wikipedia */
+export type Route = 'wait' | 'answer' | 'think' | 'search';
+
+const COMPLETE_PROMPT =
+  'Someone is speaking to a voice assistant. Here is what they have said so far. Is it a complete sentence or question, or did they stop in the middle? Answer yes if it is complete, no if they stopped in the middle.';
+
+const PLAN_PROMPT = [
+  'Write a short plan for answering the request well in a few spoken sentences: two to four brief steps on one line.',
+  'Do not answer the request yourself.',
+].join('\n');
 
 /** Rough token count of a text (English: about 4 characters a token) */
 export const roughTokens = (text: string): number => Math.ceil(text.length / 4) + 4;
