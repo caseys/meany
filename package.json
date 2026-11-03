@@ -1,0 +1,28 @@
+{
+  "name": "chatty-voice",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Voice-only chat in the browser: Whistle hears, Qwen3 0.6B EN answers, Piper speaks. Everything on the device.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy": "scripts/deploy.sh"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "0.2.85",
+    "@realtimex/piper-tts-web": "1.1.1",
+    "cactus-needle": "0.3.0",
+    "onnxruntime-web": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "jsdom": "^29.0.2",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
+  }
+}

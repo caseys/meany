@@ -1,0 +1,28 @@
+:root {
+  --bg: #0b0d12;
+  --ink: #e8ecf4;
+  --faint: #7d8597;
+  --button: #1a1f2b;
+  --accent: #38bdf8;
+  --live: #f87171;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+main { height: 100dvh; display: grid; place-items: center; grid-template-rows: 1fr auto 1fr; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); overflow: hidden; }
+.wave { width: min(320px, 80vw); height: 72px; opacity: 0; transition: opacity 0.4s; }
+#wave-out { align-self: end; margin-bottom: 32px; }
+#wave-in { align-self: start; margin-top: 32px; }
+body.on .wave { opacity: 1; }
+#start { position: relative; width: 112px; height: 112px; border: 0; border-radius: 50%; background: var(--button); color: var(--ink); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform 0.15s, background 0.3s; }
+#start:active { transform: scale(0.96); }
+#start .icon { width: 44px; height: 44px; fill: currentColor; }
+#start .stop { display: none; }
+body.on #start .mic { display: none; }
+body.on #start .stop { display: inline; }
+body.on #start { color: var(--live); }
+.ring { position: absolute; inset: -6px; width: calc(100% + 12px); height: calc(100% + 12px); transform: rotate(-90deg); pointer-events: none; }
+.ring circle { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 351.9; stroke-dashoffset: 351.9; opacity: 0; transition: stroke-dashoffset 0.3s, opacity 0.3s; }
+body.loading .ring circle { opacity: 1; }
+body.thinking .ring circle { opacity: 1; stroke-dashoffset: 264; animation: spin 1s linear infinite; transform-origin: 60px 60px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#note { position: fixed; bottom: calc(24px + env(safe-area-inset-bottom)); left: 16px; right: 16px; margin: 0; text-align: center; color: var(--faint); font-size: 13px; min-height: 1.4em; }
