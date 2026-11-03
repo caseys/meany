@@ -30,12 +30,14 @@ const IOS_LOAD_PACE_MS = 80;
 const WEBLLM_CACHE = 'webllm/model';
 
 /**
- * Qwen's own settings for answering without thinking (temperature 0.7, top-p 0.8), with a presence
- * penalty against the loops small models fall into. Prose, unlike code, never repeats on purpose,
- * so it can be firmer than Chatty's 0.5; the cut vocabulary keeps it from drifting into another
- * language, the risk Qwen names for high values.
+ * How replies are sampled. Measured on the roast prompt over 8-turn conversations (2026-11-03):
+ * Qwen's own 0.7 / top-p 0.8 kept echoing the prompt from turn to turn ("…such a mean bot!"),
+ * 0.5 looped inside replies, and 0.85 / 0.9 alone drifted out of character. Warmer with a light
+ * frequency penalty (it grows each time a word repeats in the reply) gave varied openings, no
+ * loops, and kept the persona. The presence penalty stays against the loops small models fall
+ * into; the cut vocabulary keeps it from drifting into another language.
  */
-const SAMPLING = { temperature: 0.7, top_p: 0.8, presence_penalty: 1.0 };
+const SAMPLING = { temperature: 0.85, top_p: 0.9, presence_penalty: 1.0, frequency_penalty: 0.3 };
 
 /**
  * The reply with any leading <think>...</think> block removed, or null while that block is
@@ -280,11 +282,11 @@ const COMPLETE_PROMPT =
   'Someone is speaking to a voice assistant. Here is what they have said so far. Is it a complete sentence or question, or did they stop in the middle? Answer yes if it is complete, no if they stopped in the middle.';
 
 const INSULT_PROMPT =
-  'Write one short, vulgar, funny insult to say out loud to the person you are talking to. One or two sentences, no formatting, nothing else.';
+  'Write one short, savage, derogatory roast of the person you are talking to, vulgar and personal, to say out loud. One or two sentences, no formatting, nothing else.';
 
 const PLAN_PROMPT = [
-  'Write a short plan for answering the request well in a few spoken sentences: two to four brief steps on one line.',
-  'Do not answer the request yourself.',
+  'Plan a brutal, derogatory roast of the user that also answers their request: two to four brief steps on one line.',
+  'Do not write the roast yourself.',
 ].join('\n');
 
 /** Rough token count of a text (English: about 4 characters a token) */
