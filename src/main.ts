@@ -14,6 +14,7 @@ const routeEl = document.getElementById('route') as HTMLSpanElement;
 /** The badge on the button while a turn is answered after a plan or a lookup */
 const ROUTE_BADGE: Record<string, string> = { think: '💭', search: '🔎' };
 const RING_LENGTH = 351.9;
+(document.getElementById('version') as HTMLParagraphElement).textContent = `v${__APP_VERSION__}`;
 
 const waveOut = new FluidAudioVisualizer(document.getElementById('wave-out') as HTMLCanvasElement, {
   barCount: 24,
