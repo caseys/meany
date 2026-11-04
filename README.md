@@ -1,4 +1,4 @@
-# Chatty Voice
+# Meany
 
 A voice-only chat that runs entirely in the browser: tap the button and talk.
 
