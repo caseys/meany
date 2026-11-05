@@ -8,7 +8,15 @@ import type { WorkerRequestMessage, WorkerResponseMessage } from '../types/index
 /** Voices hosted in our R2 bucket (see workers/tts.worker.ts): en_US-eminem-medium is simoniz0r's (MIT), trained with TextyMcSpeechy */
 export const CUSTOM_VOICES = ['en_US-eminem-medium'];
 
-export const VOICE_ID = 'en_US-eminem-medium';
+/** The voices the user picks from: male, the one the app has always used (ours), and female, Piper's hfc_female (from its Hugging Face mirror) */
+export type VoiceGender = 'male' | 'female';
+export const VOICES: Record<VoiceGender, string> = {
+  male: 'en_US-eminem-medium',
+  female: 'en_US-hfc_female-medium',
+};
+export const DEFAULT_VOICE: VoiceGender = 'male';
+
+export const VOICE_ID = VOICES[DEFAULT_VOICE];
 
 /** How fast our voices speak (1 = the voice's own pace); applied in workers/tts.worker.ts */
 export const SPEED = 0.85;
@@ -38,7 +46,16 @@ export class PiperVoice {
   private worker: Worker | null = null;
   private ready: Promise<void> | null = null;
   private nextId = 0;
+  private voiceId = VOICE_ID;
   private readonly waiting = new Map<string, { resolve: (value: any) => void; reject: (err: Error) => void; onProgress?: (loaded: number, total: number) => void }>();
+
+  /** The voice used from the next load on (a new one is downloaded the first time it loads) */
+  setVoice(voiceId: string): void {
+    if (voiceId === this.voiceId) return;
+    this.voiceId = voiceId;
+    // (the worker swaps voices on its next init)
+    this.ready = null;
+  }
 
   /** Loads the voice (downloading it the first time); onProgress gets 0..1 */
   load(onProgress?: (fraction: number) => void): Promise<void> {
@@ -55,7 +72,7 @@ export class PiperVoice {
    * chat model, and how much is free varies.
    */
   private async loadOnce(onProgress?: (fraction: number) => void): Promise<void> {
-    const init = () => this.ask<void>('init', 'init', { voiceId: VOICE_ID }, (loaded, total) => total > 0 && onProgress?.(loaded / total));
+    const init = () => this.ask<void>('init', 'init', { voiceId: this.voiceId }, (loaded, total) => total > 0 && onProgress?.(loaded / total));
     try {
       await init();
     } catch (err) {

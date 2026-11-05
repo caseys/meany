@@ -278,12 +278,12 @@ export class VoiceLlm {
    * written with no conversation: only the persona and the list, so the details are right in front
    * of the model (in the chat history it mostly didn't bring them back).
    */
-  async callback(persona: string, known: string[], style: ReplyStyle = {}): Promise<string> {
+  async callback(who: string, task: string, known: string[], style: ReplyStyle = {}): Promise<string> {
     await this.load();
     const { text } = await this.client!.complete({
       messages: [
-        { role: 'system', content: `You are a mean, vulgar roast bot who talks like ${persona}. Everything you write is read aloud.` },
-        { role: 'user', content: `What you know about them:\n${known.join('\n')}\nRoast them about some of this in one or two short sentences. Swear a lot, like fuck and shit. No formatting.` },
+        { role: 'system', content: `${who} Everything you write is read aloud.` },
+        { role: 'user', content: `What you know about them:\n${known.join('\n')}\n${task} No formatting.` },
       ],
       ...SAMPLING,
       ...style.sampling,
@@ -292,6 +292,32 @@ export class VoiceLlm {
       extra_body: { enable_thinking: false },
     });
     return (withoutThinking(text) ?? '').trim().replace(/\s+/g, ' ');
+  }
+
+  /**
+   * A short description of a chat for the library, from what the user said in it (the bot's lines
+   * are left out: they're mostly insults, and the model would describe those instead)
+   */
+  async summary(userLines: string[]): Promise<string> {
+    await this.load();
+    const said = userLines.join('\n').slice(-1500);
+    const { text } = await this.client!.complete({
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You write short descriptions for a list of saved chats. Describe what the person talked about in one plain, neutral sentence of at most 15 words, like "Talked about their job at a bakery and a road trip to Maine." No quotes, no swearing, no formatting.',
+        },
+        { role: 'user', content: `What the person said in the chat:\n${said}` },
+      ],
+      temperature: 0.3,
+      top_p: 0.9,
+      max_tokens: 48,
+      extra_body: { enable_thinking: false },
+    });
+    // One sentence, without wrapping quotes
+    const line = (withoutThinking(text) ?? '').trim().replace(/\s+/g, ' ').replace(/^["'“]+|["'”]+$/g, '');
+    return (line.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? line).slice(0, 160);
   }
 
   /** A short plan for answering a request, written with no conversation (only the request) */

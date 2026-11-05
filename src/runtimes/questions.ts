@@ -2,7 +2,11 @@
 // model reacts to what the user says (which it does well) and the app does the asking (which it did
 // poorly: asked in the prompt to steer, it stopped responding to the user). Topics rotate, so the chat
 // keeps moving to something new, and no question repeats until all have been asked. The user's
-// answer is then roasted like anything else they say, so the chat builds on itself.
+// answer is then roasted like anything else they say, so the chat builds on itself. These are the
+// Savage level's; tamer levels (see tone.ts) ask only the ones within their limit, and Friendly and
+// Cheeky ask the kind ones in FRIENDLY_QUESTIONS.
+
+import { allowedAt, MAX_TONE, type ToneLevel } from './tone.ts';
 
 const QUESTIONS: Record<string, string[]> = {
   job: [
@@ -180,7 +184,70 @@ const QUESTIONS: Record<string, string[]> = {
   ],
 };
 
+/** Friendly and Cheeky (see tone.ts): the same topics, asked kindly and with no bad words */
+const FRIENDLY_QUESTIONS: Record<string, string[]> = {
+  job: [
+    'So what do you do for work?',
+    "What's the best part of your job?",
+    'What did you want to be when you were a kid?',
+    "If you could have any job in the world, what would it be?",
+  ],
+  love: [
+    "Are you seeing anyone special these days?",
+    "What's the best date you've ever been on?",
+    'What do you look for in a partner?',
+    "What's the most romantic thing anyone's ever done for you?",
+  ],
+  home: [
+    'Where do you live, and do you like it there?',
+    "What's your favorite spot in your home?",
+    'If you could live anywhere, where would it be?',
+  ],
+  hobbies: [
+    'What do you like to do for fun?',
+    "What's a hobby you've always wanted to try?",
+    "What's the last thing that made you really excited?",
+    "What are you watching or reading lately?",
+  ],
+  family: [
+    'Do you have any brothers or sisters?',
+    "Who in your family are you closest to?",
+    "What's a favorite family tradition of yours?",
+  ],
+  friends: [
+    "Who's your best friend, and how did you meet?",
+    "What's the most fun thing you've done with your friends?",
+    'Are you the planner in your friend group, or the one who just shows up?',
+  ],
+  money: [
+    'If you won the lottery tomorrow, what would you buy first?',
+    "What's the best thing you've ever spent money on?",
+    'Are you a saver or a spender?',
+  ],
+  food: [
+    "What's your favorite food?",
+    "What's the best meal you've ever had?",
+    'Can you cook, or are you more of a takeout person?',
+  ],
+  car: [
+    'What do you drive?',
+    "What's your dream car?",
+    "What's the best road trip you've ever taken?",
+  ],
+  habits: [
+    'Are you a morning person or a night owl?',
+    "What's a habit you're proud of?",
+    "What's one little thing that always makes your day better?",
+  ],
+};
+
 /** Asking their name: in the opener now and then, and later until they've said it */
+const FRIENDLY_NAME_QUESTIONS = ["What's your name, friend?", 'I would love to know your name. What should I call you?', "By the way, what's your name?"];
+const CHEEKY_NAME_QUESTIONS = [
+  "What's your name, so I know who to blame later?",
+  "Tell me your name. I'm keeping a list, and you're on it.",
+  "What do people call you? Besides late for dinner.",
+];
 const NAME_QUESTIONS = [
   "What's your name, so I know who I'm wasting my time on?",
   'Who the fuck are you, anyway? What do people call you, besides a disappointment?',
@@ -215,12 +282,19 @@ let topicAt = Math.floor(Math.random() * TOPICS.length);
 
 const pick = <T>(items: T[]): T => items[Math.floor(Math.random() * items.length)];
 
+/** A topic's questions at this level: the friendly ones below Sassy, else the pool's within the level's limit */
+function questionsFor(topic: string, level: ToneLevel): string[] {
+  if (level <= 1) return FRIENDLY_QUESTIONS[topic] ?? [];
+  const allowed = QUESTIONS[topic].filter((q) => allowedAt(level, q));
+  return allowed.length ? allowed : (FRIENDLY_QUESTIONS[topic] ?? []);
+}
+
 /** The next question: the next topic in turn, a question from it not asked yet this page (all asked: all again) */
-export function nextQuestion(): Question {
+export function nextQuestion(level: ToneLevel = MAX_TONE): Question {
   for (let tries = 0; tries < TOPICS.length; tries++) {
     const topic = TOPICS[topicAt];
     topicAt = (topicAt + 1) % TOPICS.length;
-    const fresh = QUESTIONS[topic].filter((q) => !asked.has(q));
+    const fresh = questionsFor(topic, level).filter((q) => !asked.has(q));
     if (fresh.length) {
       const text = pick(fresh);
       asked.add(text);
@@ -228,12 +302,14 @@ export function nextQuestion(): Question {
     }
   }
   asked.clear();
-  return nextQuestion();
+  return nextQuestion(level);
 }
 
-/** A way of asking their name */
-export function nameQuestion(): Question {
-  return { topic: 'name', text: pick(NAME_QUESTIONS) };
+/** A way of asking their name, at this level */
+export function nameQuestion(level: ToneLevel = MAX_TONE): Question {
+  const options =
+    level === 0 ? FRIENDLY_NAME_QUESTIONS : level === 1 ? CHEEKY_NAME_QUESTIONS : NAME_QUESTIONS.filter((q) => allowedAt(level, q));
+  return { topic: 'name', text: pick(options.length ? options : CHEEKY_NAME_QUESTIONS) };
 }
 
 /** Said after a while of silence from the user (see VoiceChat: silence nags) */
@@ -254,10 +330,26 @@ const NAGS = [
   "Don't go quiet on me now, you were just getting interesting. Kidding, you weren't.",
   'Is your brain buffering, or is it just empty?',
 ];
+const FRIENDLY_NAGS = [
+  "Hey, are you still there? No rush.",
+  "Take your time. I'm right here whenever you're ready.",
+  "Still with me? I'd love to hear what you think.",
+  "No pressure! Just say something whenever you like.",
+  "I'm all ears whenever you want to chat.",
+];
+const CHEEKY_NAGS = [
+  "Hello? Did you wander off to make a sandwich without me?",
+  "I'll just wait here. Patiently. Tapping my foot.",
+  "Is this the part where we sit in silence and think about our choices?",
+  "Earth to you! Come in, you.",
+  "Don't leave me hanging. I've got so much to say about you.",
+];
 let nagAt = Math.floor(Math.random() * NAGS.length);
 
-/** The next nag, in turn */
-export function nextNag(): string {
-  nagAt = (nagAt + 1) % NAGS.length;
-  return NAGS[nagAt];
+/** The next nag at this level, in turn */
+export function nextNag(level: ToneLevel = MAX_TONE): string {
+  const nags = level === 0 ? FRIENDLY_NAGS : level === 1 ? CHEEKY_NAGS : NAGS.filter((nag) => allowedAt(level, nag));
+  const options = nags.length ? nags : CHEEKY_NAGS;
+  nagAt = (nagAt + 1) % options.length;
+  return options[nagAt];
 }
