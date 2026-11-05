@@ -24,6 +24,17 @@
       <canvas id="wave-in" class="wave" aria-hidden="true"></canvas>
       <p id="note" role="status" aria-live="polite"></p>
     </main>
+    <section id="settings" aria-label="Settings">
+      <div class="voice" role="radiogroup" aria-label="Voice">
+        <label><input type="radio" name="voice" value="female" /><span>Female</span></label>
+        <label><input type="radio" name="voice" value="male" /><span>Male</span></label>
+      </div>
+      <label class="tone">
+        <span class="tone-head">Attitude: <strong id="tone-name"></strong></span>
+        <input id="tone" type="range" min="0" max="4" step="1" />
+        <span id="tone-blurb"></span>
+      </label>
+    </section>
     <p id="version"></p>
     <script type="module" src="/src/main.ts"></script>
   </body>

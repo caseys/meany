@@ -33,7 +33,8 @@ function restartOnCommit(): Plugin {
     apply: 'serve',
     configureServer(server) {
       const gitDir = git('rev-parse', '--absolute-git-dir');
-      if (!gitDir) return;
+      // (only a server with a port: Vitest runs one without, and the watch would keep it from exiting)
+      if (!gitDir || !server.httpServer) return;
       // Git appends to this log whenever HEAD moves
       const headLog = join(gitDir, 'logs', 'HEAD');
       const onChange = () => {
@@ -41,7 +42,7 @@ function restartOnCommit(): Plugin {
         void server.restart();
       };
       watchFile(headLog, { interval: 1000 }, onChange);
-      server.httpServer?.once('close', () => unwatchFile(headLog, onChange));
+      server.httpServer.once('close', () => unwatchFile(headLog, onChange));
     },
   };
 }

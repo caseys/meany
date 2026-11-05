@@ -5,12 +5,16 @@ import './style.css';
 import { FluidAudioVisualizer } from './audio/visualizer.ts';
 import { VoiceChat, type VoiceState } from './engine.ts';
 import type { Route } from './runtimes/llm.ts';
+import type { VoiceGender } from './runtimes/piper.ts';
+import { TONES, toTone } from './runtimes/tone.ts';
+import { loadSettings, saveSettings } from './core/settings.ts';
 
 const button = document.getElementById('start') as HTMLButtonElement;
 const ring = button.querySelector('.ring circle') as SVGCircleElement;
 const note = document.getElementById('note') as HTMLParagraphElement;
 const emojiEl = document.getElementById('emoji') as HTMLDivElement;
 const routeEl = document.getElementById('route') as HTMLSpanElement;
+const voiceInputs = [...document.querySelectorAll<HTMLInputElement>('#settings input[name="voice"]')];
 /** The badge on the button while a turn is answered after a plan or a lookup */
 const ROUTE_BADGE: Record<string, string> = { think: '💭', search: '🔎' };
 const RING_LENGTH = 351.9;
@@ -49,6 +53,8 @@ function renderNote(): void {
 const chat = new VoiceChat({
   onState: (state, detail) => {
     document.body.className = state === 'idle' || state === 'error' ? state : `on ${state}`;
+    // The voice is picked between chats (a new one loads on the next start); the tone, any time
+    for (const input of voiceInputs) input.disabled = state !== 'idle' && state !== 'error';
     button.setAttribute('aria-label', state === 'idle' || state === 'error' ? 'Start talking' : 'Stop');
     if (state === 'listening' || state === 'idle') {
       routeEl.classList.remove('shown');
@@ -79,6 +85,39 @@ const chat = new VoiceChat({
     ring.style.strokeDashoffset = String(RING_LENGTH * (1 - fraction));
   },
 });
+
+// Settings: the voice (female or male) and the tone (see runtimes/tone.ts), kept between visits
+const settings = loadSettings();
+const settingsEl = document.getElementById('settings') as HTMLElement;
+const toneInput = document.getElementById('tone') as HTMLInputElement;
+const toneName = document.getElementById('tone-name') as HTMLElement;
+const toneBlurb = document.getElementById('tone-blurb') as HTMLElement;
+function showTone(): void {
+  const { name, blurb } = TONES[settings.tone];
+  toneInput.value = String(settings.tone);
+  toneInput.setAttribute('aria-valuetext', `${name}: ${blurb}`);
+  toneName.textContent = name;
+  toneBlurb.textContent = blurb;
+  settingsEl.dataset.tone = String(settings.tone);
+}
+for (const input of voiceInputs) {
+  input.checked = input.value === settings.voice;
+  input.addEventListener('change', () => {
+    if (!input.checked) return;
+    settings.voice = input.value as VoiceGender;
+    chat.setVoice(settings.voice);
+    saveSettings(settings);
+  });
+}
+toneInput.addEventListener('input', () => {
+  settings.tone = toTone(toneInput.value);
+  chat.setTone(settings.tone);
+  showTone();
+  saveSettings(settings);
+});
+chat.setVoice(settings.voice);
+chat.setTone(settings.tone);
+showTone();
 
 button.addEventListener('click', () => {
   if (chat.state === 'idle' || chat.state === 'error') void chat.start();

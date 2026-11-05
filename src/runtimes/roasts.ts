@@ -2,7 +2,10 @@
 // first to short lines that swear, speak to "you", and don't lean on the photo, the thread, or anyone's
 // identity, health or family; then chosen by hand and lightly cleaned up. The chat opens with one, and
 // one stands in for a reply that fails (see VoiceChat.answer). Shuffled, so none repeats until all have
-// been said.
+// been said. That pool is the Savage level's; the tamer levels (see tone.ts) say only its lines
+// within their limit, with clean lines of their own below.
+
+import { allowedAt, MAX_TONE, type ToneLevel } from './tone.ts';
 
 const ROASTS = [
   'Not even your fingers would fuck you sober.',
@@ -118,16 +121,72 @@ const ROASTS = [
   "It's not life's fault, it's yours, you fucking weirdo.",
 ];
 
-let bag: string[] = [];
+/** Friendly: what the bot says in a roast's place, warm and clean */
+const FRIENDLY_LINES = [
+  "Hey there! I'm really glad you stopped by.",
+  "Well, look who it is. You just made my day a little better.",
+  "I've got a good feeling about you.",
+  "You seem like someone with great stories.",
+  "Honestly, you've got good energy.",
+  "I like the way you think.",
+  "Nice! You're easy to talk to, you know that?",
+  "That's the spirit!",
+  "You're doing better than you think.",
+  "I'm having a great time chatting with you.",
+  "Ha! I love that.",
+  "Okay, you're officially my favorite person to talk to today.",
+];
 
-/** A roast from the pool, none repeated until all have been said */
-export function nextRoast(): string {
+/** Cheeky: gentle teasing between friends, clean */
+const CHEEKY_LINES = [
+  "Oh good, it's you. I was hoping for someone with this much confidence and this little reason for it.",
+  "You've got the energy of someone who replies all to company emails.",
+  "I bet you clap when the plane lands.",
+  "You seem like the type to leave one bite of food in the container and put it back in the fridge.",
+  "You have the vibe of someone who says you're five minutes away while still in the shower.",
+  "I can tell you've rehearsed arguments in the shower and won every single one.",
+  "You probably still have a drawer full of mystery cables.",
+  "I bet you've waved back at someone who was waving at the person behind you.",
+  "You look like you read the terms and conditions, then agreed anyway.",
+  "You give off strong I'll start on Monday energy.",
+  "I bet you have forty open tabs right now, and you need all of them.",
+  "You seem like you'd lose a staring contest to a goldfish. Lovingly.",
+];
+
+/** Sassy: real roasts with no bad words, added to the pool's own clean ones */
+const SASSY_LINES = [
+  "You're the human version of a participation trophy.",
+  "You have the charisma of a damp sock.",
+  "Somewhere out there, a tree is producing oxygen for you. It owes you an apology.",
+  "You're proof that even the cloud can't store everything, like your bad decisions.",
+  "You bring everyone so much joy, when you leave the room.",
+  "You're like a software update. Nobody wants you, and you always show up at the worst time.",
+  "If confidence were talent, you'd be a genius. It isn't.",
+  "You've got a face made for podcasts.",
+  "Your personality is a loading screen that never finishes.",
+  "You're not stupid. You just have bad luck when you think.",
+];
+
+/** The lines the bot may say in a roast's place at each level */
+function poolFor(level: ToneLevel): string[] {
+  if (level === 0) return FRIENDLY_LINES;
+  if (level === 1) return CHEEKY_LINES;
+  if (level === 2) return [...SASSY_LINES, ...ROASTS.filter((line) => allowedAt(2, line))];
+  return ROASTS.filter((line) => allowedAt(level, line));
+}
+
+const bags = new Map<ToneLevel, string[]>();
+
+/** A line from this level's pool, none repeated until all of that pool have been said */
+export function nextRoast(level: ToneLevel = MAX_TONE): string {
+  let bag = bags.get(level) ?? [];
   if (bag.length === 0) {
-    bag = [...ROASTS];
+    bag = [...poolFor(level)];
     for (let i = bag.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [bag[i], bag[j]] = [bag[j], bag[i]];
     }
+    bags.set(level, bag);
   }
   return bag.pop()!;
 }

@@ -278,12 +278,12 @@ export class VoiceLlm {
    * written with no conversation: only the persona and the list, so the details are right in front
    * of the model (in the chat history it mostly didn't bring them back).
    */
-  async callback(persona: string, known: string[], style: ReplyStyle = {}): Promise<string> {
+  async callback(who: string, task: string, known: string[], style: ReplyStyle = {}): Promise<string> {
     await this.load();
     const { text } = await this.client!.complete({
       messages: [
-        { role: 'system', content: `You are a mean, vulgar roast bot who talks like ${persona}. Everything you write is read aloud.` },
-        { role: 'user', content: `What you know about them:\n${known.join('\n')}\nRoast them about some of this in one or two short sentences. Swear a lot, like fuck and shit. No formatting.` },
+        { role: 'system', content: `${who} Everything you write is read aloud.` },
+        { role: 'user', content: `What you know about them:\n${known.join('\n')}\n${task} No formatting.` },
       ],
       ...SAMPLING,
       ...style.sampling,

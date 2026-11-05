@@ -15,17 +15,18 @@
 import { SharedAudioSubsystem } from './audio/audio-subsystem.ts';
 import { IncrementalPhraseSegmenter, normalizeTextForSpeech } from './core/speech-normalizer.ts';
 import { MAX_REPLY_TOKENS, roughTokens, SAMPLING, VoiceLlm, type ChatMessage, type ReplyStyle, type Route } from './runtimes/llm.ts';
-import { BASE_NOISE_SCALE, BASE_NOISE_W, PiperVoice, SPEED, type VoiceTuning } from './runtimes/piper.ts';
+import { BASE_NOISE_SCALE, BASE_NOISE_W, PiperVoice, SPEED, VOICES, type VoiceGender, type VoiceTuning } from './runtimes/piper.ts';
 import { WhistleSttProvider } from './runtimes/stt-provider.ts';
 import { lookUp } from './runtimes/wikipedia.ts';
 import { emojiFor } from './runtimes/emoji.ts';
 import { keepAwake } from './core/keep-awake.ts';
 import { nextRoast } from './runtimes/roasts.ts';
 import { nameQuestion, nextNag, nextQuestion, TOPIC_LABEL } from './runtimes/questions.ts';
+import { callbackTask, cleanUp, DEFAULT_TONE, FRIENDLY_PERSONAS, howToReply, toTone, whoYouAre, type ToneLevel } from './runtimes/tone.ts';
 
 export type VoiceState = 'idle' | 'loading' | 'listening' | 'thinking' | 'speaking' | 'error';
 
-/** One per session, so each chat has its own voice: a phrase finishing "a mean, vulgar roast bot who talks like…" */
+/** One per session, so each chat has its own voice: a phrase finishing "a … roast bot who talks like…" (from Sassy up; see tone.ts for the friendly ones) */
 const PERSONAS = [
   'a burned-out drill sergeant',
   'a disappointed grandma',
@@ -37,11 +38,14 @@ const PERSONAS = [
   'a mean high school gym teacher',
 ];
 
-/** The system prompt: the session's persona, their name once they've said it, and this turn's length (see fuzzTurn) */
-const systemPrompt = (sentences: number, persona: string, name?: string) =>
-  `You are a mean, vulgar roast bot who talks like ${persona}, in a spoken conversation. Everything you write is read aloud.` +
+/**
+ * The system prompt: who the bot is at the user's tone level (see tone.ts) with the session's
+ * persona, their name once they've said it, and this turn's length (see fuzzTurn)
+ */
+const systemPrompt = (sentences: number, tone: ToneLevel, persona: string, name?: string) =>
+  `${whoYouAre(tone, persona)} Everything you write is read aloud.` +
   (name ? ` When you asked their name, they said: "${name}".` : '') +
-  ` Respond to what they just said and insult them. Swear a lot, like fuck and shit. Keep it to ${SPOKEN_LENGTH[sentences] ?? 'one or two short sentences'}, with no formatting.`;
+  ` ${howToReply(tone)} Keep it to ${SPOKEN_LENGTH[sentences] ?? 'one or two short sentences'}, with no formatting.`;
 const SPOKEN_LENGTH: Record<number, string> = {
   1: 'one short sentence',
   2: 'one or two short sentences',
@@ -177,8 +181,11 @@ export class VoiceChat {
   private style = fuzzTurn();
   /** The last turn ended without the app's question */
   private skippedQuestion = false;
-  /** This session's persona (see PERSONAS) */
-  private readonly persona = PERSONAS[Math.floor(Math.random() * PERSONAS.length)];
+  /** This session's personas (see PERSONAS and tone.ts): a roast one, and a friendly one for Friendly and Cheeky */
+  private readonly roastPersona = PERSONAS[Math.floor(Math.random() * PERSONAS.length)];
+  private readonly friendlyPersona = FRIENDLY_PERSONAS[Math.floor(Math.random() * FRIENDLY_PERSONAS.length)];
+  /** How rough the bot is (see tone.ts), set by the user; read each turn, so a change applies from the next one */
+  private tone: ToneLevel = DEFAULT_TONE;
   /** What they answered, by the topic of the question asked (their next words after it), never parsed */
   private readonly answers = new Map<string, string>();
   /** The topic of the question just asked: their next words answer it */
@@ -220,6 +227,24 @@ export class VoiceChat {
     });
   }
 
+  /** How rough the bot is (see tone.ts): applies from its next line */
+  get toneLevel(): ToneLevel {
+    return this.tone;
+  }
+  setTone(level: number): void {
+    this.tone = toTone(level);
+  }
+
+  /** The voice it speaks in: from the next start (a new voice downloads then, the first time) */
+  setVoice(gender: VoiceGender): void {
+    this.voice.setVoice(VOICES[gender]);
+  }
+
+  /** The persona for the tone it's at: a friendly one below Sassy */
+  private get persona(): string {
+    return this.tone <= 1 ? this.friendlyPersona : this.roastPersona;
+  }
+
   private async reopenMic(): Promise<void> {
     if (this.state === 'idle' || this.state === 'error' || this.state === 'loading' || this.audio.micLive()) return;
     console.warn('[voice] the mic stopped while the page was hidden: opening it again');
@@ -249,15 +274,19 @@ export class VoiceChat {
         await this.stt.initialize((loaded, total) => total > 0 && this.events.onProgress?.(0.95 + (loaded / total) * 0.05));
         this.loaded = true;
         this.events.onProgress?.(1);
+      } else {
+        // The voice again, in case another one was picked since (at once if it's the same)
+        await this.voice.load((f) => this.events.onProgress?.(f));
+        this.events.onProgress?.(1);
       }
       // (read fresh: stop() may have run while it loaded)
       const now = (): VoiceState => this.state;
       if (now() !== 'loading') return; // stopped while loading
       if (this.history.length === 0) {
         // The chat opens with a roast from the pool: no model call, so it starts at once
-        const question = Math.random() < OPENER_NAME_ODDS ? nameQuestion() : nextQuestion();
+        const question = Math.random() < OPENER_NAME_ODDS ? nameQuestion(this.tone) : nextQuestion(this.tone);
         this.askedTopic = question.topic;
-        const intro = `${nextRoast()} ${question.text}`;
+        const intro = `${nextRoast(this.tone)} ${question.text}`;
         this.history.push({ role: 'assistant', content: intro });
         this.setState('speaking');
         await this.speak([intro], ++this.turn);
@@ -374,7 +403,7 @@ export class VoiceChat {
     if (again !== COPIED && again) return again;
     // Copied again, or nothing said: a roast from the pool instead
     if (turn !== this.turn) return '';
-    const roast = nextRoast();
+    const roast = nextRoast(this.tone);
     console.info(`[voice] no usable reply: a roast from the pool instead`);
     await this.speak([roast], turn);
     return roast;
@@ -396,7 +425,7 @@ export class VoiceChat {
     let speaking = null as ReturnType<VoiceChat['speakStream']> | null;
     const startSpeaking = () => {
       speaking = this.speakStream(sentences, turn);
-      this.showEmoji(text, turn);
+      this.showEmoji(cleanUp(text, this.tone), turn);
     };
     const repeats = (sentence: string) =>
       (!said.length && previous.some((reply) => copies(sentence, reply))) || repeatsPhrase(sentence, phrases);
@@ -410,7 +439,8 @@ export class VoiceChat {
       if (turn !== this.turn) break;
       text += piece;
       let repeated = false;
-      for (const sentence of segmenter.push(piece)) {
+      // (each sentence cleaned up to the tone's limit before it's checked, said, or kept)
+      for (const sentence of segmenter.push(piece).map((s) => cleanUp(s, this.tone))) {
         repeated = repeats(sentence);
         if (repeated) break;
         keep(sentence);
@@ -428,7 +458,7 @@ export class VoiceChat {
     }
     // (cut off at this turn's length or at a repeat, the unfinished rest isn't said)
     if (said.length < this.style.sentences && !this.abort.signal.aborted) {
-      for (const sentence of segmenter.flush()) {
+      for (const sentence of segmenter.flush().map((s) => cleanUp(s, this.tone))) {
         if (repeats(sentence)) {
           if (!said.length) return COPIED;
           break;
@@ -444,7 +474,7 @@ export class VoiceChat {
     speaking!.close();
     await speaking!.done;
     // What was said (a cut-off reply's unsaid rest isn't kept in the history either)
-    const reply = said.join(' ').trim() || text.trim();
+    const reply = said.join(' ').trim() || cleanUp(text.trim(), this.tone);
     console.info(`[voice] said: ${reply}`);
     return reply;
   }
@@ -463,7 +493,7 @@ export class VoiceChat {
     if (this.answers.size >= 2 && this.turnsSinceCallback >= CALLBACK_EVERY) {
       this.turnsSinceCallback = 0;
       const known = [...this.answers].map(([topic, said]) => `${TOPIC_LABEL[topic] ?? topic}: they said "${said}"`);
-      const callback = await this.llm.callback(this.persona, known, this.style.reply).catch(() => '');
+      const callback = cleanUp(await this.llm.callback(whoYouAre(this.tone, this.persona), callbackTask(this.tone), known, this.style.reply).catch(() => ''), this.tone);
       if (turn !== this.turn) return '';
       // Its first two sentences: asked for one or two, it often runs on
       const segmenter = new IncrementalPhraseSegmenter();
@@ -475,14 +505,14 @@ export class VoiceChat {
     }
     const ask = this.skippedQuestion || Math.random() < QUESTION_ODDS;
     this.skippedQuestion = !ask;
-    if (!ask) return nextRoast();
-    const question = !this.answers.has('name') && Math.random() < NAME_ODDS ? nameQuestion() : nextQuestion();
+    if (!ask) return nextRoast(this.tone);
+    const question = !this.answers.has('name') && Math.random() < NAME_ODDS ? nameQuestion(this.tone) : nextQuestion(this.tone);
     this.askedTopic = question.topic;
     return question.text;
   }
 
   private system(): string {
-    return systemPrompt(this.style.sentences, this.persona, this.answers.get('name'));
+    return systemPrompt(this.style.sentences, this.tone, this.persona, this.answers.get('name'));
   }
 
   /** While it's their turn, silence for a while (10 to 60 s, new each time) brings a nag (a few in a row at most) */
@@ -494,7 +524,7 @@ export class VoiceChat {
       this.nagTimer = null;
       if (this.state !== 'listening' || this.pending) return;
       this.nagsInARow++;
-      const nag = nextNag();
+      const nag = nextNag(this.tone);
       const turn = ++this.turn;
       this.history.push({ role: 'assistant', content: nag });
       this.setState('speaking');
