@@ -193,6 +193,8 @@ export class VoiceChat {
   private turnsSinceCallback = 0;
   private nagTimer: ReturnType<typeof setTimeout> | null = null;
   private nagsInARow = 0;
+  /** A summary being written (see summarize) */
+  private summarizing: Promise<string> | null = null;
 
   constructor(private readonly events: VoiceChatEvents = {}) {
     this.audio = new SharedAudioSubsystem(
@@ -240,6 +242,48 @@ export class VoiceChat {
     this.voice.setVoice(VOICES[gender]);
   }
 
+  /** The conversation so far (what was said, in order), for the library */
+  get transcript(): ChatMessage[] {
+    return this.history.map((m) => ({ ...m }));
+  }
+
+  /** Between chats: the next start begins a new conversation, with an opener */
+  newConversation(): void {
+    this.loadConversation([]);
+  }
+
+  /** Between chats: the next start picks up this conversation where it left off (no opener) */
+  loadConversation(messages: ChatMessage[]): void {
+    if (this.state !== 'idle' && this.state !== 'error') return;
+    this.history.length = 0;
+    this.history.push(...messages.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ ...m })));
+    this.answers.clear();
+    this.askedTopic = null;
+    this.turnsSinceCallback = 0;
+    this.skippedQuestion = false;
+    this.nagsInARow = 0;
+  }
+
+  /**
+   * A one-sentence description of a conversation for the library, written by the chat model, or ''
+   * when the model isn't loaded (it isn't downloaded just for this) or nothing was said. A start
+   * waits for one under way, so the model isn't asked two things at once.
+   */
+  async summarize(messages: ChatMessage[]): Promise<string> {
+    const said = messages.filter((m) => m.role === 'user').map((m) => m.content);
+    if (!this.loaded || !said.length) return '';
+    const work = this.llm.summary(said).catch((err) => {
+      console.warn('[voice] no summary', err);
+      return '';
+    });
+    this.summarizing = work;
+    try {
+      return cleanUp(await work, 0);
+    } finally {
+      if (this.summarizing === work) this.summarizing = null;
+    }
+  }
+
   /** The persona for the tone it's at: a friendly one below Sassy */
   private get persona(): string {
     return this.tone <= 1 ? this.friendlyPersona : this.roastPersona;
@@ -265,6 +309,8 @@ export class VoiceChat {
     keepAwake(true);
     this.setState('loading');
     try {
+      // (a library summary still being written finishes first: one request at a time)
+      if (this.summarizing) await this.summarizing;
       // The mic first, so its permission is asked while the tap is fresh
       await this.audio.startMicrophoneCapture();
       if (!this.loaded) {

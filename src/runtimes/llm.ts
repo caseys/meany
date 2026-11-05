@@ -294,6 +294,32 @@ export class VoiceLlm {
     return (withoutThinking(text) ?? '').trim().replace(/\s+/g, ' ');
   }
 
+  /**
+   * A short description of a chat for the library, from what the user said in it (the bot's lines
+   * are left out: they're mostly insults, and the model would describe those instead)
+   */
+  async summary(userLines: string[]): Promise<string> {
+    await this.load();
+    const said = userLines.join('\n').slice(-1500);
+    const { text } = await this.client!.complete({
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You write short descriptions for a list of saved chats. Describe what the person talked about in one plain, neutral sentence of at most 15 words, like "Talked about their job at a bakery and a road trip to Maine." No quotes, no swearing, no formatting.',
+        },
+        { role: 'user', content: `What the person said in the chat:\n${said}` },
+      ],
+      temperature: 0.3,
+      top_p: 0.9,
+      max_tokens: 48,
+      extra_body: { enable_thinking: false },
+    });
+    // One sentence, without wrapping quotes
+    const line = (withoutThinking(text) ?? '').trim().replace(/\s+/g, ' ').replace(/^["'“]+|["'”]+$/g, '');
+    return (line.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? line).slice(0, 160);
+  }
+
   /** A short plan for answering a request, written with no conversation (only the request) */
   async plan(request: string): Promise<string> {
     await this.load();

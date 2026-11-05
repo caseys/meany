@@ -9,6 +9,7 @@ import type { Route } from './runtimes/llm.ts';
 import type { VoiceGender } from './runtimes/piper.ts';
 import { TONES, toTone } from './runtimes/tone.ts';
 import { loadSettings, saveSettings } from './core/settings.ts';
+import { deleteChat, describe, loadLibrary, newChatId, saveChat, setSummary, type SavedChat } from './core/library.ts';
 
 const button = document.getElementById('start') as HTMLButtonElement;
 const buttonLabel = document.getElementById('start-label') as HTMLSpanElement;
@@ -77,6 +78,11 @@ const chat = new VoiceChat({
     shownState = state;
     errorDetail = detail ?? '';
     renderNote();
+    // A chat that stops is saved to the library; while one is on, the library can't change it
+    if (wasOn && !on) saveCurrent();
+    wasOn = on;
+    newChatButton.disabled = on;
+    renderLibrary();
   },
   onRoute: (decided) => {
     route = decided;
@@ -131,6 +137,133 @@ toneInput.addEventListener('input', () => {
 chat.setVoice(settings.voice);
 chat.setTone(settings.tone);
 showTone();
+
+// The library: recent chats, each saved when it stops, with a summary the chat model writes
+const libraryToggle = document.getElementById('library-toggle') as HTMLButtonElement;
+const libraryPanel = document.getElementById('library') as HTMLElement;
+const libraryList = document.getElementById('library-list') as HTMLUListElement;
+const libraryCount = document.getElementById('library-count') as HTMLSpanElement;
+const newChatButton = document.getElementById('new-chat') as HTMLButtonElement;
+const idleMsg = document.getElementById('idle-msg') as HTMLParagraphElement;
+const when = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+let library: SavedChat[] = loadLibrary();
+/** The conversation the chat is on: a new one, or one picked from the library */
+let current = { id: newChatId(), startedAt: Date.now() };
+let wasOn = false;
+/** The chat whose summary is being written, and the one shown open */
+let summarizingId: string | null = null;
+let openId: string | null = null;
+/** A delete waiting for its second tap */
+let confirmingDelete: string | null = null;
+
+function saveCurrent(): void {
+  const messages = chat.transcript;
+  if (!messages.some((m) => m.role === 'user')) return; // nothing said yet: nothing to keep
+  const id = current.id;
+  library = saveChat({ id, startedAt: current.startedAt, updatedAt: Date.now(), summary: '', messages });
+  summarizingId = id;
+  renderLibrary();
+  void chat.summarize(messages).then((summary) => {
+    if (summarizingId === id) summarizingId = null;
+    library = summary ? setSummary(id, summary, messages.length) : loadLibrary();
+    renderLibrary();
+  });
+}
+
+function startFresh(note: string): void {
+  chat.newConversation();
+  current = { id: newChatId(), startedAt: Date.now() };
+  idleMsg.textContent = note;
+}
+
+function setLibraryOpen(open: boolean): void {
+  libraryPanel.hidden = !open;
+  libraryToggle.setAttribute('aria-expanded', String(open));
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderLibrary(): void {
+  libraryCount.textContent = library.length ? String(library.length) : '';
+  const idle = chat.state === 'idle' || chat.state === 'error';
+  libraryList.replaceChildren(
+    ...library.map((saved) => {
+      const open = saved.id === openId;
+      const item = el('li', open ? 'entry open' : 'entry');
+
+      const head = el('button', 'entry-head');
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(open));
+      const meta = el('span', 'entry-meta', `${when.format(saved.updatedAt)} · ${saved.messages.length} messages`);
+      if (saved.id === current.id) meta.append(el('span', 'badge', 'Current'));
+      const pending = !saved.summary && saved.id === summarizingId;
+      head.append(meta, el('span', pending ? 'entry-summary pending' : 'entry-summary', pending ? 'Writing a summary…' : describe(saved)));
+      head.addEventListener('click', () => {
+        openId = open ? null : saved.id;
+        confirmingDelete = null;
+        renderLibrary();
+      });
+      item.append(head);
+
+      if (open) {
+        const body = el('div', 'entry-body');
+        const transcript = el('ol', 'transcript');
+        for (const m of saved.messages) {
+          const line = el('li', `msg ${m.role}`);
+          line.append(el('span', 'who', m.role === 'user' ? 'You' : 'Meany'), el('p', undefined, m.content));
+          transcript.append(line);
+        }
+        const actions = el('div', 'entry-actions');
+        const resume = el('button', 'primary', saved.id === current.id ? 'Keep talking' : 'Continue chat');
+        resume.type = 'button';
+        resume.disabled = !idle;
+        resume.title = idle ? '' : 'Stop the chat first';
+        resume.addEventListener('click', () => {
+          chat.loadConversation(saved.messages);
+          current = { id: saved.id, startedAt: saved.startedAt };
+          idleMsg.textContent = 'Picked up where you left off. Press Start to keep talking.';
+          openId = null;
+          setLibraryOpen(false);
+          renderLibrary();
+        });
+        const remove = el('button', confirmingDelete === saved.id ? 'danger confirm' : 'danger', confirmingDelete === saved.id ? 'Tap again to delete' : 'Delete');
+        remove.type = 'button';
+        remove.disabled = !idle && saved.id === current.id;
+        remove.addEventListener('click', () => {
+          if (confirmingDelete !== saved.id) {
+            confirmingDelete = saved.id;
+            renderLibrary();
+            return;
+          }
+          confirmingDelete = null;
+          library = deleteChat(saved.id);
+          if (saved.id === current.id) startFresh('Press Start, then just talk.');
+          openId = null;
+          renderLibrary();
+        });
+        actions.append(resume, remove);
+        body.append(transcript, actions);
+        item.append(body);
+      }
+      return item;
+    })
+  );
+}
+
+libraryToggle.addEventListener('click', () => setLibraryOpen(libraryToggle.getAttribute('aria-expanded') !== 'true'));
+newChatButton.addEventListener('click', () => {
+  if (chat.state !== 'idle' && chat.state !== 'error') return;
+  startFresh('New chat. Press Start, then just talk.');
+  openId = null;
+  renderLibrary();
+});
+renderLibrary();
 
 button.addEventListener('click', () => {
   if (chat.state === 'idle' || chat.state === 'error') void chat.start();

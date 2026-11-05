@@ -13,6 +13,24 @@
         <p class="tagline">A voice chat that talks back</p>
       </header>
 
+      <nav class="toolbar" aria-label="Chats">
+        <button id="library-toggle" class="tool" type="button" aria-expanded="false" aria-controls="library">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10" /></svg>
+          <span>Library</span>
+          <span id="library-count" class="count"></span>
+          <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+        <button id="new-chat" class="tool" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          <span>New chat</span>
+        </button>
+      </nav>
+
+      <section id="library" class="library" aria-label="Saved chats" hidden>
+        <ul id="library-list"></ul>
+        <p id="library-empty">No saved chats yet. A chat is saved here when you stop it.</p>
+      </section>
+
       <main class="card">
         <div class="stage">
           <p id="idle-msg">Press Start, then just talk.</p>
