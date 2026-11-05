@@ -1,5 +1,6 @@
-// The page: one button, and the two waveforms (the bot's voice above, the mic below) once the
-// chat is on. The ring around the button shows the first load, then spins while the bot thinks.
+// The page: a Start button that says what the chat is doing (Listening, Thinking, Speaking) while
+// it's on, and the two waveforms (the bot's voice above, the mic below). The button fills up during
+// the first load. Below it, the settings: the voice and the attitude.
 
 import './style.css';
 import { FluidAudioVisualizer } from './audio/visualizer.ts';
@@ -10,14 +11,23 @@ import { TONES, toTone } from './runtimes/tone.ts';
 import { loadSettings, saveSettings } from './core/settings.ts';
 
 const button = document.getElementById('start') as HTMLButtonElement;
-const ring = button.querySelector('.ring circle') as SVGCircleElement;
+const buttonLabel = document.getElementById('start-label') as HTMLSpanElement;
+const hint = document.getElementById('hint') as HTMLParagraphElement;
 const note = document.getElementById('note') as HTMLParagraphElement;
 const emojiEl = document.getElementById('emoji') as HTMLDivElement;
 const routeEl = document.getElementById('route') as HTMLSpanElement;
 const voiceInputs = [...document.querySelectorAll<HTMLInputElement>('#settings input[name="voice"]')];
 /** The badge on the button while a turn is answered after a plan or a lookup */
 const ROUTE_BADGE: Record<string, string> = { think: '💭', search: '🔎' };
-const RING_LENGTH = 351.9;
+/** What the button says in each state */
+const STATE_LABEL: Record<VoiceState, string> = {
+  idle: 'Start',
+  error: 'Try again',
+  loading: 'Getting ready…',
+  listening: 'Listening',
+  thinking: 'Thinking',
+  speaking: 'Speaking',
+};
 (document.getElementById('version') as HTMLParagraphElement).textContent = `v${__APP_VERSION__}`;
 
 const waveOut = new FluidAudioVisualizer(document.getElementById('wave-out') as HTMLCanvasElement, {
@@ -44,8 +54,8 @@ let shownState: VoiceState = 'idle';
 let errorDetail = '';
 function renderNote(): void {
   if (shownState === 'error') note.textContent = `Couldn't start: ${errorDetail || 'unknown error'}`;
-  else if (shownState === 'loading') note.textContent = 'Getting ready…';
-  else if (shownState === 'listening') note.textContent = route === 'wait' ? ROUTE_NOTE.wait : 'Listening';
+  else if (shownState === 'loading') note.textContent = 'The first start downloads the voice and language models, which can take a minute.';
+  else if (shownState === 'listening') note.textContent = route === 'wait' ? ROUTE_NOTE.wait : '';
   else if (shownState === 'thinking' || shownState === 'speaking') note.textContent = route && route !== 'wait' ? ROUTE_NOTE[route] : '';
   else note.textContent = errorDetail;
 }
@@ -55,7 +65,10 @@ const chat = new VoiceChat({
     document.body.className = state === 'idle' || state === 'error' ? state : `on ${state}`;
     // The voice is picked between chats (a new one loads on the next start); the tone, any time
     for (const input of voiceInputs) input.disabled = state !== 'idle' && state !== 'error';
-    button.setAttribute('aria-label', state === 'idle' || state === 'error' ? 'Start talking' : 'Stop');
+    const on = state !== 'idle' && state !== 'error';
+    buttonLabel.textContent = STATE_LABEL[state];
+    button.setAttribute('aria-label', on ? `${STATE_LABEL[state]}. Tap to stop.` : STATE_LABEL[state]);
+    hint.textContent = on ? 'Tap the button to stop' : 'Your microphone is used only while the chat is on';
     if (state === 'listening' || state === 'idle') {
       routeEl.classList.remove('shown');
       // A new turn of the user's: how it will be answered isn't known yet
@@ -82,7 +95,7 @@ const chat = new VoiceChat({
     });
   },
   onProgress: (fraction) => {
-    ring.style.strokeDashoffset = String(RING_LENGTH * (1 - fraction));
+    button.style.setProperty('--progress', String(fraction));
   },
 });
 
